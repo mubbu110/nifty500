@@ -8,18 +8,18 @@ Centralized settings for styling, thresholds, and analysis parameters
 # ============================================================================
 
 THEMES = {
-    "dark": {
-        "bg_primary": "#0a0e27",
-        "bg_secondary": "#0f1629",
-        "bg_card": "rgba(30,27,75,0.6)",
-        "border_color": "rgba(99,102,241,0.3)",
-        "text_primary": "#e0e7ff",
-        "text_secondary": "#a5b4fc",
-        "accent": "#a78bfa",
-        "green": "#6ee7b7",
-        "red": "#fca5a5",
-        "yellow": "#fcd34d",
-    },
+       "dark": {
+           "bg_primary": "#0a0e27",
+           "bg_secondary": "#0f1629",
+           "bg_card": "rgba(20, 25, 60, 0.8)",
+           "border_color": "rgba(139, 92, 246, 0.5)",
+           "text_primary": "#f0f4ff",
+           "text_secondary": "#c7d2fe",
+           "accent": "#c084fc",
+           "green": "#34d399",
+           "red": "#f87171",
+           "yellow": "#fbbf24",
+       },
     "light": {
         "bg_primary": "#ffffff",
         "bg_secondary": "#f8f9fa",
