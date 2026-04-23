@@ -1,0 +1,32 @@
+[theme]
+primaryColor = "#a78bfa"
+backgroundColor = "#0a0e27"
+secondaryBackgroundColor = "#0f1629"
+textColor = "#e0e7ff"
+font = "sans serif"
+
+[client]
+showErrorDetails = false
+showSidebarNavigation = true
+
+[logger]
+level = "info"
+
+[client.toolbarMode]
+# Hide unnecessary toolbar buttons for cleaner UI
+showSidebarNavigation = true
+
+[server]
+# Performance settings for Streamlit Cloud
+port = 8501
+maxUploadSize = 50
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[runner]
+# Cache settings for better performance
+magicEnabled = false
