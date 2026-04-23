@@ -64,16 +64,12 @@ if "manual_headline" not in st.session_state:
 # SIDEBAR: STOCK SELECTION & NEWS FETCHING
 # ============================================================================
 
-with st.sidebar:
-    # Title
-    st.markdown('<div class="title">Nifty 500<br>Impact</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">Stock Analysis Dashboard</div>', unsafe_allow_html=True)
-    st.markdown("---")
-    
-    # Theme toggle
-    theme_toggle_button()
-    
-    st.markdown("---")
+   with st.sidebar:
+       # Title
+       st.markdown('<div class="title">Nifty 500<br>Impact</div>', unsafe_allow_html=True)
+       st.markdown('<div class="subtitle">Stock Analysis Dashboard</div>', unsafe_allow_html=True)
+       st.markdown("---")
+
     
     # Load stocks
     stocks, live_data = load_nifty500()
