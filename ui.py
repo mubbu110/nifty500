@@ -6,6 +6,7 @@ from html import escape
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pandas as pd
 from config import TOOLTIPS
 from theme import get_colors
 
