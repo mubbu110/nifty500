@@ -183,10 +183,18 @@ recommendation, rec_class, rec_score, rec_reasons = generate_recommendation(
     st.session_state.selected_news
 )
 
-# Page title
-st.markdown(f'<div class="title">{escape(company_name)}</div>', unsafe_allow_html=True)
-st.markdown(f'<div class="subtitle">{escape(symbol)}.NS | Nifty 500 Constituent</div>', unsafe_allow_html=True)
+# Top right theme toggle
+   col1, col2, col3 = st.columns([1, 8, 1])
+   with col3:
+       current_theme = get_theme()
+       if st.button("🌓", help=f"Switch to {'Light' if current_theme == 'dark' else 'Dark'} Mode"):
+           new_theme = "light" if current_theme == "dark" else "dark"
+           set_theme(new_theme)
+           st.rerun()
 
+   # Page title
+   st.markdown(f'<div class="title">{escape(company_name)}</div>', unsafe_allow_html=True)
+   st.markdown(f'<div class="subtitle">{escape(symbol)}.NS | Nifty 500 Constituent</div>', unsafe_allow_html=True)
 # Top recommendation cards
 col_rec, col_reasons = st.columns([1.2, 2.2], gap="large")
 
