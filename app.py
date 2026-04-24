@@ -576,19 +576,38 @@ with tab6:
                 use_container_width=True)
 
             st.markdown("#### 📈 1-Year Normalised Performance")
-            COLORS = ['#c084fc','#fbbf24','#34d399','#60a5fa','#fb923c']
+            st.caption(f"**{symbol}** shown as thick white line · peers shown thinner")
+            PEER_COLORS = ['#fbbf24','#34d399','#60a5fa','#fb923c','#a78bfa']
             fig_n = go.Figure()
-            for i,(sym,c) in enumerate(peer_closes.items()):
+            peer_idx = 0
+            for sym, c in peer_closes.items():
                 try:
-                    norm = c/c.iloc[0]*100
-                    fig_n.add_trace(go.Scatter(x=norm.index, y=norm, name=sym,
-                        line=dict(color=COLORS[i%len(COLORS)], width=2)))
-                except Exception: pass
+                    norm = c / c.iloc[0] * 100
+                    is_main = (sym.upper() == symbol.upper())
+                    if is_main:
+                        fig_n.add_trace(go.Scatter(
+                            x=norm.index, y=norm, name=f"▶ {sym}",
+                            line=dict(color='#ffffff', width=5),
+                            zorder=10,
+                        ))
+                    else:
+                        color = PEER_COLORS[peer_idx % len(PEER_COLORS)]
+                        fig_n.add_trace(go.Scatter(
+                            x=norm.index, y=norm, name=sym,
+                            line=dict(color=color, width=1.5),
+                            opacity=0.65,
+                        ))
+                        peer_idx += 1
+                except Exception:
+                    pass
             fig_n.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.25)")
-            fig_n.update_layout(height=400, template='plotly_dark',
+            fig_n.update_layout(
+                height=420, template='plotly_dark',
                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
                 hovermode='x unified', yaxis_title="Rebased to 100",
-                margin=dict(l=10,r=10,t=20,b=10))
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+                margin=dict(l=10, r=10, t=40, b=10),
+            )
             st.plotly_chart(fig_n, use_container_width=True)
 
             st.markdown("#### 📊 Return Comparison")
