@@ -577,9 +577,62 @@ with tab6:
 
             st.markdown("#### 📈 1-Year Normalised Performance")
             st.caption(f"**{symbol}** shown as thick white line · peers shown thinner")
+
+            # ── Peer toggle checkboxes ────────────────────────────────────
+            peer_list = [s for s in peer_closes.keys() if s.upper() != symbol.upper()]
+            if peer_list:
+                st.markdown("**Toggle peers:**")
+                toggle_cols = st.columns(min(len(peer_list), 5))
+                visible_peers = set()
+                for ci, ps in enumerate(peer_list):
+                    key = f"peer_toggle_{symbol}_{ps}"
+                    if key not in st.session_state:
+                        st.session_state[key] = True
+                    with toggle_cols[ci % len(toggle_cols)]:
+                        if st.checkbox(ps, value=st.session_state[key], key=key):
+                            visible_peers.add(ps)
+
+            # ── Index overlay controls ────────────────────────────────────
+            st.markdown("**➕ Add index overlay:**")
+            idx_c1, idx_c2, idx_c3 = st.columns(3)
+            show_nifty50  = idx_c1.checkbox("📊 Nifty 50",     key=f"idx_n50_{symbol}",  value=False)
+            show_niftymid = idx_c2.checkbox("📊 Nifty Midcap", key=f"idx_mid_{symbol}",  value=False)
+            show_sensex   = idx_c3.checkbox("📊 Sensex",        key=f"idx_sen_{symbol}",  value=False)
+
+            INDEX_MAP = {
+                "Nifty 50":     "^NSEI",
+                "Nifty Midcap": "^NSEMDCP50",
+                "Sensex":       "^BSESN",
+            }
+            INDEX_COLORS = {
+                "Nifty 50":     "#94a3b8",
+                "Nifty Midcap": "#7dd3fc",
+                "Sensex":       "#fdba74",
+            }
+            indices_to_show = []
+            if show_nifty50:  indices_to_show.append("Nifty 50")
+            if show_niftymid: indices_to_show.append("Nifty Midcap")
+            if show_sensex:   indices_to_show.append("Sensex")
+
+            # Fetch index data (cached)
+            @st.cache_data(ttl=300, show_spinner=False)
+            def _fetch_index(ticker_sym):
+                try:
+                    d = yf.download(ticker_sym, period="1y", progress=False, auto_adjust=True)
+                    if d.empty:
+                        return None
+                    c = d["Close"]
+                    if isinstance(c, pd.DataFrame):
+                        c = c.iloc[:, 0]
+                    return c.dropna()
+                except Exception:
+                    return None
+
+            # ── Build chart ───────────────────────────────────────────────
             PEER_COLORS = ['#fbbf24','#34d399','#60a5fa','#fb923c','#a78bfa']
             fig_n = go.Figure()
-            peer_idx = 0
+            peer_color_idx = 0
+
             for sym, c in peer_closes.items():
                 try:
                     norm = c / c.iloc[0] * 100
@@ -588,25 +641,40 @@ with tab6:
                         fig_n.add_trace(go.Scatter(
                             x=norm.index, y=norm, name=f"▶ {sym}",
                             line=dict(color='#ffffff', width=5),
-                            zorder=10,
                         ))
-                    else:
-                        color = PEER_COLORS[peer_idx % len(PEER_COLORS)]
+                    elif sym in visible_peers:
+                        color = PEER_COLORS[peer_color_idx % len(PEER_COLORS)]
                         fig_n.add_trace(go.Scatter(
                             x=norm.index, y=norm, name=sym,
                             line=dict(color=color, width=1.5),
                             opacity=0.65,
                         ))
-                        peer_idx += 1
+                        peer_color_idx += 1
                 except Exception:
                     pass
+
+            # Add selected indices
+            for idx_name in indices_to_show:
+                idx_close = _fetch_index(INDEX_MAP[idx_name])
+                if idx_close is not None:
+                    try:
+                        norm_idx = idx_close / idx_close.iloc[0] * 100
+                        fig_n.add_trace(go.Scatter(
+                            x=norm_idx.index, y=norm_idx,
+                            name=idx_name,
+                            line=dict(color=INDEX_COLORS[idx_name], width=2, dash='dash'),
+                            opacity=0.8,
+                        ))
+                    except Exception:
+                        pass
+
             fig_n.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.25)")
             fig_n.update_layout(
-                height=420, template='plotly_dark',
+                height=460, template='plotly_dark',
                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
                 hovermode='x unified', yaxis_title="Rebased to 100",
                 legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
-                margin=dict(l=10, r=10, t=40, b=10),
+                margin=dict(l=10, r=10, t=50, b=10),
             )
             st.plotly_chart(fig_n, use_container_width=True)
 
