@@ -125,26 +125,119 @@ def calculate_wma(series, period):
 
 @st.cache_data(ttl=CACHE_FUNDAMENTALS_TTL)
 def fetch_fundamentals(symbol):
-    """Fetch company fundamentals from yfinance"""
-    try:
-        ticker = yf.Ticker(f"{symbol}.NS")
-        info = ticker.info
+    """
+    Fetch fundamentals using fast_info first (most reliable for Indian tickers),
+    then ticker.info as backup, then derive everything possible from price history.
 
-        fundamentals = {
-            "pe_ratio": info.get("trailingPE", "N/A"),
-            "market_cap": info.get("marketCap", "N/A"),
-            "eps": info.get("trailingEps", "N/A"),
-            "dividend_yield": info.get("dividendYield", "N/A"),
-            "revenue": info.get("totalRevenue", "N/A"),
-            "profit_margin": info.get("profitMargins", "N/A"),
-            "debt_to_equity": info.get("debtToEquity", "N/A"),
-            "52_week_high": info.get("fiftyTwoWeekHigh", "N/A"),
-            "52_week_low": info.get("fiftyTwoWeekLow", "N/A"),
-        }
+    Priority order:
+      1. fast_info  — market_cap, 52W high/low, shares outstanding, last_price
+      2. ticker.info — PE, EPS, dividend, margins, debt/equity
+      3. price history — 52W high/low always available, derive PE from EPS
+    """
+    result = {k: "N/A" for k in [
+        "pe_ratio", "market_cap", "eps", "dividend_yield",
+        "revenue", "profit_margin", "debt_to_equity",
+        "52_week_high", "52_week_low",
+    ]}
 
-        return fundamentals
-    except:
-        return {k: "N/A" for k in ["pe_ratio", "market_cap", "eps", "dividend_yield", "revenue", "profit_margin", "debt_to_equity", "52_week_high", "52_week_low"]}
+    for suffix in [".NS", ".BO"]:
+        ticker_sym = f"{symbol}{suffix}"
+        try:
+            ticker = yf.Ticker(ticker_sym)
+
+            # ── Step 1: fast_info — always works, gives core numbers ───
+            try:
+                fi = ticker.fast_info
+                attrs = {a: getattr(fi, a, None) for a in dir(fi) if not a.startswith("_")}
+
+                mc = attrs.get("market_cap") or attrs.get("marketCap")
+                if mc and float(mc) > 0:
+                    result["market_cap"] = float(mc)
+
+                yh = attrs.get("year_high") or attrs.get("fiftyTwoWeekHigh")
+                if yh:
+                    result["52_week_high"] = round(float(yh), 2)
+
+                yl = attrs.get("year_low") or attrs.get("fiftyTwoWeekLow")
+                if yl:
+                    result["52_week_low"] = round(float(yl), 2)
+
+                last_price = attrs.get("last_price") or attrs.get("regularMarketPrice")
+                shares = attrs.get("shares") or attrs.get("sharesOutstanding")
+            except Exception:
+                last_price, shares = None, None
+
+            # ── Step 2: ticker.info with strict validation ─────────────
+            try:
+                info = ticker.info or {}
+                # Only trust info if it has real data (not just trailingPegRatio)
+                has_data = any(
+                    info.get(k) not in (None, 0, "")
+                    for k in ["marketCap", "trailingPE", "trailingEps", "totalRevenue"]
+                )
+                if has_data:
+                    def _get(key):
+                        v = info.get(key)
+                        return v if v not in (None, 0, "") else "N/A"
+
+                    if result["pe_ratio"] == "N/A":
+                        result["pe_ratio"] = _get("trailingPE")
+                    if result["market_cap"] == "N/A":
+                        mc2 = _get("marketCap")
+                        if mc2 != "N/A":
+                            result["market_cap"] = float(mc2)
+                    if result["eps"] == "N/A":
+                        result["eps"] = _get("trailingEps")
+                    if result["dividend_yield"] == "N/A":
+                        result["dividend_yield"] = _get("dividendYield")
+                    if result["revenue"] == "N/A":
+                        result["revenue"] = _get("totalRevenue")
+                    if result["profit_margin"] == "N/A":
+                        result["profit_margin"] = _get("profitMargins")
+                    if result["debt_to_equity"] == "N/A":
+                        result["debt_to_equity"] = _get("debtToEquity")
+                    if result["52_week_high"] == "N/A":
+                        result["52_week_high"] = _get("fiftyTwoWeekHigh")
+                    if result["52_week_low"] == "N/A":
+                        result["52_week_low"] = _get("fiftyTwoWeekLow")
+            except Exception:
+                pass
+
+            # ── Step 3: derive from price history (always reliable) ────
+            try:
+                hist = ticker.history(period="1y", auto_adjust=True)
+                if not hist.empty:
+                    if result["52_week_high"] == "N/A":
+                        result["52_week_high"] = round(float(hist["High"].max()), 2)
+                    if result["52_week_low"] == "N/A":
+                        result["52_week_low"] = round(float(hist["Low"].min()), 2)
+
+                    # Derive market cap from last price × shares if still missing
+                    if result["market_cap"] == "N/A" and shares and last_price:
+                        try:
+                            result["market_cap"] = float(last_price) * float(shares)
+                        except Exception:
+                            pass
+
+                    # Derive PE from last price ÷ EPS if both available
+                    if result["pe_ratio"] == "N/A" and result["eps"] != "N/A" and last_price:
+                        try:
+                            eps_val = float(result["eps"])
+                            if eps_val > 0:
+                                result["pe_ratio"] = round(float(last_price) / eps_val, 2)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Stop trying .BO if we got meaningful data from .NS
+            if any(result[k] != "N/A" for k in ["market_cap", "52_week_high", "52_week_low"]):
+                break
+
+        except Exception:
+            continue
+
+    return result
 
 # ============================================================================
 # NIFTY BENCHMARK - CACHED SEPARATELY
