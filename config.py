@@ -1,15 +1,13 @@
 # Professional Configuration - Enhanced
 
 # ============================================================================
-# API KEYS (Free Tier - Get from https://finnhub.io)
+# API KEYS
 # ============================================================================
-
-FINNHUB_API_KEY = "YOUR_FINNHUB_KEY"  # Get free at finnhub.io
+FINNHUB_API_KEY = "YOUR_FINNHUB_KEY"
 
 # ============================================================================
 # THEME CONFIGURATION
 # ============================================================================
-
 THEMES = {
     "dark": {
         "bg_primary": "#0a0e27",
@@ -40,66 +38,46 @@ THEMES = {
 # ============================================================================
 # TECHNICAL ANALYSIS PARAMETERS
 # ============================================================================
-
-# Moving Averages
 MA_PERIOD_SHORT = 50
 MA_PERIOD_LONG = 200
-
-# RSI
 RSI_PERIOD = 14
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
-
-# MACD
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
-
-# Bollinger Bands
 BB_PERIOD = 20
 BB_STD = 2
-
-# Stochastic RSI
 STOCH_RSI_PERIOD = 14
 STOCH_RSI_K = 3
 STOCH_RSI_D = 3
-
-# ADX (Trend Strength)
 ADX_PERIOD = 14
 ADX_STRONG = 25
 ADX_VERY_STRONG = 40
-
-# Volume
 VOLUME_PERIOD = 20
 
 # ============================================================================
 # BACKTESTING PARAMETERS
 # ============================================================================
-
 BACKTEST_PERIODS = [
     ("1 Month", 30),
     ("3 Months", 90),
     ("6 Months", 180),
     ("1 Year", 365),
 ]
-
-BACKTEST_INITIAL_CAPITAL = 100000  # Rs
-BACKTEST_POSITION_SIZE = 0.95  # Use 95% of capital per trade
+BACKTEST_INITIAL_CAPITAL = 100000
+BACKTEST_POSITION_SIZE = 0.95
 
 # ============================================================================
 # SIGNAL CONFIRMATION RULES
 # ============================================================================
-
-# BUY Signal Requirements (must meet ALL)
 BUY_REQUIREMENTS = {
-    "trend": "Price above MA200",  # Long-term trend
-    "momentum": "RSI > 40",  # Not oversold
-    "macd": "MACD above signal",  # Momentum positive
-    "volume": "Volume above 20-day avg",  # Strength confirmation
-    "bollinger": "Price near lower band OR above middle",  # Entry zone
+    "trend": "Price above MA200",
+    "momentum": "RSI > 40",
+    "macd": "MACD above signal",
+    "volume": "Volume above 20-day avg",
+    "bollinger": "Price near lower band OR above middle",
 }
-
-# SELL Signal Requirements (must meet ANY 2)
 SELL_REQUIREMENTS = {
     "trend": "Price below MA50",
     "momentum": "RSI > 70",
@@ -110,24 +88,21 @@ SELL_REQUIREMENTS = {
 # ============================================================================
 # RISK MANAGEMENT
 # ============================================================================
-
-RISK_PER_TRADE = 0.02  # Risk 2% per trade
-REWARD_TO_RISK_MIN = 2.0  # Min 2:1 reward/risk
-POSITION_SIZE_PERCENT = 0.05  # 5% of capital per position
+RISK_PER_TRADE = 0.02
+REWARD_TO_RISK_MIN = 2.0
+POSITION_SIZE_PERCENT = 0.05
 
 # ============================================================================
-# CACHE TTL (Time To Live in seconds)
+# CACHE TTL
 # ============================================================================
-
-CACHE_INDEX_TTL = 24 * 60 * 60  # 24 hours
-CACHE_PRICE_TTL = 5 * 60  # 5 minutes
-CACHE_FUNDAMENTALS_TTL = 24 * 60 * 60  # 24 hours
-CACHE_NEWS_TTL = 5 * 60  # 5 minutes
+CACHE_INDEX_TTL = 24 * 60 * 60
+CACHE_PRICE_TTL = 5 * 60
+CACHE_FUNDAMENTALS_TTL = 24 * 60 * 60
+CACHE_NEWS_TTL = 5 * 60
 
 # ============================================================================
 # DATA FETCHING
 # ============================================================================
-
 PRICE_HISTORY_YEARS = 3
 REQUEST_TIMEOUT = 10
 MAX_NEWS_ARTICLES = 15
@@ -135,7 +110,6 @@ MAX_NEWS_ARTICLES = 15
 # ============================================================================
 # NIFTY 500 CONFIG
 # ============================================================================
-
 INDEX_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
 
 STOCK_STOPWORDS = {
@@ -156,7 +130,7 @@ FALLBACK_STOCKS = [
     {"Company Name": "ICICI Bank Ltd.", "Symbol": "ICICIBANK", "Industry": "Financial Services"},
     {"Company Name": "Infosys Ltd.", "Symbol": "INFY", "Industry": "Information Technology"},
     {"Company Name": "Tata Consultancy Services Ltd.", "Symbol": "TCS", "Industry": "Information Technology"},
-    {"Company Name": "Larsen & Toubro Ltd.", "Symbol": "LT", "Industry": "Construction"},
+    {"Company Name": "Larsen & Toubro Ltd.", "Symbol": "LT", "Industry": "Capital Goods"},
     {"Company Name": "State Bank of India", "Symbol": "SBIN", "Industry": "Financial Services"},
     {"Company Name": "Bharti Airtel Ltd.", "Symbol": "BHARTIARTL", "Industry": "Telecommunication"},
     {"Company Name": "ITC Ltd.", "Symbol": "ITC", "Industry": "Fast Moving Consumer Goods"},
@@ -166,7 +140,6 @@ FALLBACK_STOCKS = [
 # ============================================================================
 # TOOLTIPS & HELP TEXT
 # ============================================================================
-
 TOOLTIPS = {
     "MA50": "50-day Moving Average: Average price over 50 days (short-term trend)",
     "MA200": "200-day Moving Average: Average price over 200 days (long-term trend)",
@@ -183,16 +156,94 @@ TOOLTIPS = {
 }
 
 # ============================================================================
-# SECTOR MAPPING (Nifty 500)
+# SECTOR MAPPING — covers all major Nifty 500 industries
+# Key = Industry name as it appears in the NSE CSV (case-insensitive match used in app)
+# Up to 4 peers per sector to keep API calls manageable
 # ============================================================================
-
 SECTOR_MAPPING = {
-    "Financial Services": ["HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN", "KOTAK", "HDFC", "INDIABULLS"],
-    "Information Technology": ["TCS", "INFY", "WIPRO", "HCL", "TECH"],
-    "Oil Gas & Energy": ["RELIANCE", "BPCL", "IOCL", "NTPC"],
-    "Automobiles": ["MARUTI", "TATA", "HYUNDAI", "BAJAJ"],
-    "Telecommunications": ["BHARTIARTL", "JIO", "VODAFONE"],
-    "FMCG": ["ITC", "HINDUNILVR", "BRITANNIA"],
-    "Real Estate": ["DLF", "OBEROI", "LODHA"],
-    "Construction": ["LT", "ADANIPORTS"],
+    # Financial Services
+    "Financial Services": ["HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN", "KOTAKBANK", "INDUSINDBK", "BANDHANBNK", "FEDERALBNK"],
+    "Banking": ["HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN", "KOTAKBANK", "INDUSINDBK"],
+
+    # IT
+    "Information Technology": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "MPHASIS", "COFORGE"],
+    "IT": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM"],
+
+    # Oil & Gas
+    "Oil Gas & Consumable Fuels": ["RELIANCE", "ONGC", "BPCL", "IOC", "GAIL", "HINDPETRO"],
+    "Oil Gas & Energy": ["RELIANCE", "ONGC", "BPCL", "IOC", "GAIL"],
+
+    # Pharma
+    "Pharmaceuticals": ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "AUROPHARMA", "LUPIN", "ALKEM", "BIOCON"],
+    "Pharmaceuticals & Biotechnology": ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "AUROPHARMA", "LUPIN"],
+
+    # Auto
+    "Automobile and Auto Components": ["MARUTI", "TATAMOTORS", "M&M", "BAJAJ-AUTO", "EICHERMOT", "HEROMOTOCO", "TVSMOTOR", "ASHOKLEY"],
+    "Automobiles": ["MARUTI", "TATAMOTORS", "M&M", "BAJAJ-AUTO", "EICHERMOT"],
+    "Auto Components": ["MOTHERSON", "BOSCHLTD", "APOLLOTYRE", "CEATLTD", "MRF"],
+
+    # FMCG
+    "Fast Moving Consumer Goods": ["ITC", "HINDUNILVR", "NESTLEIND", "BRITANNIA", "DABUR", "MARICO", "GODREJCP", "COLPAL"],
+    "FMCG": ["ITC", "HINDUNILVR", "NESTLEIND", "BRITANNIA", "DABUR"],
+
+    # Capital Goods / Industrials
+    "Capital Goods": ["LT", "SIEMENS", "ABB", "BHEL", "CUMMINSIND", "APLAPOLLO", "THERMAX", "HAVELLS"],
+    "Industrial Manufacturing": ["LT", "SIEMENS", "ABB", "BHEL", "CUMMINSIND", "THERMAX"],
+
+    # Telecom
+    "Telecommunication": ["BHARTIARTL", "INDUSTOWER", "TATACOMM", "HFCL"],
+    "Telecom": ["BHARTIARTL", "INDUSTOWER", "TATACOMM"],
+
+    # Metals & Mining
+    "Metals & Mining": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "VEDL", "SAIL", "NMDC", "COALINDIA", "HINDCOPPER"],
+    "Metals": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "VEDL", "SAIL"],
+
+    # Power & Energy
+    "Power": ["NTPC", "POWERGRID", "ADANIPOWER", "TATAPOWER", "TORNTPOWER", "CESC"],
+    "Utilities": ["NTPC", "POWERGRID", "TATAPOWER", "TORNTPOWER"],
+
+    # Real Estate
+    "Realty": ["DLF", "GODREJPROP", "PRESTIGE", "OBEROIRLTY", "PHOENIXLTD", "LODHA"],
+    "Real Estate": ["DLF", "GODREJPROP", "PRESTIGE", "OBEROIRLTY"],
+
+    # Construction / Infrastructure
+    "Construction": ["LT", "NCC", "KNR", "KNRCON", "IRB", "HGINFRA", "PNC"],
+    "Infrastructure": ["LT", "ADANIPORTS", "IRB", "HGINFRA"],
+
+    # Consumer Durables
+    "Consumer Durables": ["TITAN", "VOLTAS", "HAVELLS", "CROMPTON", "DIXON", "BLUESTAR", "WHIRLPOOL"],
+
+    # Chemicals
+    "Chemicals": ["PIDILITIND", "AARTIIND", "DEEPAKNTR", "ALKYLAMINE", "NAVINFLUOR", "VINATIORGA", "BALCHEMLTD"],
+    "Specialty Chemicals": ["PIDILITIND", "AARTIIND", "DEEPAKNTR", "ALKYLAMINE", "NAVINFLUOR"],
+
+    # Cement
+    "Cement & Cement Products": ["ULTRACEMCO", "AMBUJACEM", "ACC", "SHREECEM", "RAMCOCEM", "JKCEMENT"],
+    "Cement": ["ULTRACEMCO", "AMBUJACEM", "ACC", "SHREECEM"],
+
+    # Textiles
+    "Textiles": ["PAGEIND", "VIPIND", "RAYMOND", "TRIDENT", "WELSPUNIND"],
+
+    # Media & Entertainment
+    "Media Entertainment & Publication": ["ZEEL", "SUNTV", "PVRINOX", "INOXGREEN"],
+    "Media": ["ZEEL", "SUNTV", "PVRINOX"],
+
+    # Insurance
+    "Insurance": ["SBILIFE", "HDFCLIFE", "ICICIPRULI", "LICI", "STARHEALTH"],
+
+    # Healthcare Services
+    "Healthcare": ["APOLLOHOSP", "FORTIS", "MAXHEALTH", "MEDANTA", "NARAYANHRUDAYALAYA"],
+
+    # Retail
+    "Retailing": ["DMART", "TRENT", "ABFRL", "SHOPERSTOP", "NYKAA"],
+
+    # IT Services / Fintech
+    "Financial Technology": ["PAYTM", "POLICYBZR", "ZOMATO", "NAUKRI", "JUSTDIAL"],
+
+    # Logistics
+    "Transportation": ["IRCTC", "CONCOR", "BLUEDART", "MAHLOG", "DELHIVERY"],
+    "Logistics": ["IRCTC", "CONCOR", "BLUEDART", "DELHIVERY"],
+
+    # Diversified
+    "Diversified": ["TATAMOTORS", "RELIANCE", "ITC", "LT", "ADANIENT"],
 }
