@@ -8,16 +8,12 @@ font = "sans serif"
 [client]
 showErrorDetails = false
 showSidebarNavigation = true
+toolbarMode = "auto"
 
 [logger]
 level = "info"
 
-[client.toolbarMode]
-# Hide unnecessary toolbar buttons for cleaner UI
-showSidebarNavigation = true
-
 [server]
-# Performance settings for Streamlit Cloud
 port = 8501
 maxUploadSize = 50
 enableXsrfProtection = true
@@ -28,5 +24,4 @@ gatherUsageStats = false
 serverAddress = "localhost"
 
 [runner]
-# Cache settings for better performance
 magicEnabled = false
