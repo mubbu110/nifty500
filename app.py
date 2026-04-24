@@ -1,12 +1,16 @@
 """
-Professional Nifty 500 Dashboard - Enhanced Version
-FIXED:
-- Tab stays on current tab when stock changes or period selected
-- Peer data auto-loads (no button needed), cached per symbol
-- Comprehensive sector mapping for all Nifty 500 industries
+Professional Nifty 500 Dashboard
+- No sidebar navigation: horizontal tabs on top
+- Stock search + select merged into one smart input
+- No stock auto-selected on first load
+- News section with sentiment feeding BUY/SELL/HOLD
+- Only one theme toggle (top-right)
+- Tabs never reset on interaction
 """
 
 import time
+import feedparser
+import re
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -30,17 +34,26 @@ st.set_page_config(
     page_title="Nifty 500 Professional",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ============================================================================
-# SESSION STATE INIT — must happen before any widgets
+# SESSION STATE
 # ============================================================================
 
-if "theme" not in st.session_state:
-    st.session_state.theme = "dark"
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = 0   # 0=Analysis, 1=Fundamentals, 2=Backtest, 3=Risk, 4=Sector
+for key, default in [
+    ("theme", "dark"),
+    ("active_tab", 0),
+    ("symbol", None),
+    ("company_name", None),
+    ("industry", None),
+    ("selected_news", []),
+    ("news_fetched_for", None),
+    ("news_items", []),
+    ("sector_period", "1Y Return"),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # ============================================================================
 # THEME
@@ -50,20 +63,29 @@ def apply_theme():
     theme = THEMES[st.session_state.theme]
     st.markdown(f"""
     <style>
-    .stApp {{background-color: {theme['bg_primary']}}}
-    .stMetric {{background-color: {theme['bg_card']}; border-radius: 10px; padding: 15px}}
+    /* Hide Streamlit default sidebar toggle & hamburger */
+    [data-testid="collapsedControl"] {{display: none}}
+    section[data-testid="stSidebar"] {{display: none}}
+    .stApp {{background-color: {theme['bg_primary']}; color: {theme['text_primary']}}}
+    .stMetric {{background-color: {theme['bg_card']}; border-radius:10px; padding:15px}}
+    /* Tab bar styling */
+    .stTabs [data-baseweb="tab-list"] {{gap: 4px}}
+    .stTabs [data-baseweb="tab"] {{
+        padding: 8px 20px;
+        border-radius: 8px 8px 0 0;
+        font-weight: 600;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
 apply_theme()
 
 # ============================================================================
-# CACHED PEER FETCH — keyed by symbol so switching stock auto-invalidates
+# HELPER FUNCTIONS
 # ============================================================================
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_peer_close(sym: str) -> pd.Series | None:
-    """Fetch 1Y close for one symbol. 0.4s delay to avoid rate limiting."""
+def fetch_peer_close(sym: str):
     time.sleep(0.4)
     for suffix in [".NS", ".BO"]:
         try:
@@ -78,14 +100,11 @@ def fetch_peer_close(sym: str) -> pd.Series | None:
             pass
     return None
 
-def find_sector(symbol: str, industry: str) -> str | None:
-    """Find sector for a stock by symbol match first, then industry name."""
+def find_sector(symbol, industry):
     sym_upper = symbol.upper()
-    # Direct symbol match
     for sector, syms in SECTOR_MAPPING.items():
         if sym_upper in [s.upper() for s in syms]:
             return sector
-    # Industry name match (case-insensitive substring)
     if industry and industry not in ("Unknown", ""):
         ind_lower = industry.lower()
         for sector in SECTOR_MAPPING:
@@ -93,69 +112,147 @@ def find_sector(symbol: str, industry: str) -> str | None:
                 return sector
     return None
 
-def get_peers(symbol: str, sector: str, max_peers: int = 4) -> list:
-    """Return peer symbols for a sector, excluding current symbol."""
+def get_peers(symbol, sector, max_peers=4):
     if not sector or sector not in SECTOR_MAPPING:
         return []
     return [s for s in SECTOR_MAPPING[sector] if s.upper() != symbol.upper()][:max_peers]
 
+# ── News & Sentiment ─────────────────────────────────────────────────────────
+
+BULLISH_WORDS = {
+    "beats": 2.0, "profit": 1.8, "growth": 1.5, "surge": 2.0, "rally": 1.8,
+    "upgrade": 2.0, "record": 1.8, "launches": 1.2, "wins": 1.5, "raises": 1.5,
+    "buyback": 1.8, "strong": 1.5, "order": 1.2, "expansion": 1.5, "acquisition": 1.2,
+    "dividend": 1.5, "outperform": 2.0, "buy": 1.5, "positive": 1.2, "recovery": 1.5,
+}
+BEARISH_WORDS = {
+    "misses": -2.0, "loss": -1.8, "fraud": -3.0, "probe": -2.0, "downgrade": -2.0,
+    "penalty": -2.0, "resigns": -1.5, "crash": -2.5, "weak": -1.5, "falls": -1.2,
+    "default": -3.0, "debt": -1.2, "selloff": -2.0, "drop": -1.2, "cuts": -1.5,
+    "lawsuit": -2.0, "investigation": -2.0, "miss": -1.8, "negative": -1.2, "concern": -1.2,
+}
+
+def score_headline(text: str) -> float:
+    text_lower = text.lower()
+    score = 0.0
+    for word, weight in BULLISH_WORDS.items():
+        if word in text_lower:
+            score += weight
+    for word, weight in BEARISH_WORDS.items():
+        if word in text_lower:
+            score += weight  # already negative
+    return max(-10.0, min(10.0, score))
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_news(symbol: str) -> list:
+    """Fetch news from Yahoo Finance RSS."""
+    news = []
+    urls = [
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}.NS&region=IN&lang=en-IN",
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=IN&lang=en-IN",
+    ]
+    for url in urls:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:15]:
+                title = entry.get("title", "")
+                if not title:
+                    continue
+                sentiment = score_headline(title)
+                news.append({
+                    "title": title,
+                    "link": entry.get("link", "#"),
+                    "published": entry.get("published", ""),
+                    "sentiment": sentiment,
+                })
+            if news:
+                break
+        except Exception:
+            pass
+    return news
+
 # ============================================================================
-# SIDEBAR
+# TOP BAR — logo + stock search + theme toggle (NO sidebar)
 # ============================================================================
 
-with st.sidebar:
-    st.markdown("# 📊 Nifty 500 Professional")
-    st.markdown("Advanced Analysis Dashboard")
-    st.markdown("---")
+stocks, live_data = load_nifty500()
+stocks["Label"] = stocks["Company Name"] + " (" + stocks["Symbol"] + ")"
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🌙 Dark", key="dark_btn"):
-            st.session_state.theme = "dark"
-            st.rerun()
-    with c2:
-        if st.button("☀️ Light", key="light_btn"):
-            st.session_state.theme = "light"
-            st.rerun()
+top_l, top_m, top_r = st.columns([2, 6, 1])
 
-    st.markdown("---")
+with top_l:
+    st.markdown("### 📊 Nifty 500 Professional")
 
-    stocks, live_data = load_nifty500()
-    if not live_data:
-        st.warning("⚠️ Using fallback stock list")
-
-    stocks["Label"] = stocks["Company Name"] + " (" + stocks["Symbol"] + ")"
-
-    st.markdown("### 🔍 Select Stock")
-    search = st.text_input("Search", placeholder="e.g., RELIANCE", key="search_input")
-    filtered = stocks[stocks["Label"].str.contains(search.upper(), regex=False)] if search else stocks
+with top_m:
+    # Single smart search input — type symbol or company name
+    search_val = st.text_input(
+        "🔍 Search stock",
+        placeholder="Type symbol or company name (e.g. INFY, Reliance, TCS…)",
+        label_visibility="collapsed",
+        key="smart_search",
+    )
+    if search_val.strip():
+        q = search_val.strip().upper()
+        filtered = stocks[
+            stocks["Symbol"].str.contains(q, regex=False) |
+            stocks["Company Name"].str.upper().str.contains(q, regex=False)
+        ]
+    else:
+        filtered = pd.DataFrame()   # empty until user types
 
     if not filtered.empty:
-        # Use index to detect stock change without resetting tab
-        prev_symbol = st.session_state.get("selected_symbol", "RELIANCE")
-        selected = st.selectbox("Choose stock", filtered["Label"],
-                                label_visibility="collapsed", key="stock_select")
-        symbol       = filtered[filtered["Label"] == selected]["Symbol"].values[0]
-        company_name = filtered[filtered["Label"] == selected]["Company Name"].values[0]
-        industry     = filtered[filtered["Label"] == selected]["Industry"].values[0] \
+        chosen = st.selectbox(
+            "Select", filtered["Label"],
+            label_visibility="collapsed",
+            key="stock_dd",
+        )
+        new_symbol   = filtered[filtered["Label"] == chosen]["Symbol"].values[0]
+        new_company  = filtered[filtered["Label"] == chosen]["Company Name"].values[0]
+        new_industry = filtered[filtered["Label"] == chosen]["Industry"].values[0] \
                        if "Industry" in filtered.columns else "Unknown"
-        st.session_state["selected_symbol"] = symbol
-    else:
-        symbol, company_name, industry = "RELIANCE", "Reliance Industries Ltd.", "Oil Gas & Consumable Fuels"
 
-    # Tab selector in sidebar so it persists across reruns
+        # Only update + rerun when stock actually changes
+        if new_symbol != st.session_state.symbol:
+            st.session_state.symbol       = new_symbol
+            st.session_state.company_name = new_company
+            st.session_state.industry     = new_industry
+            st.session_state.selected_news = []
+            st.session_state.news_items    = []
+            st.session_state.news_fetched_for = None
+            st.rerun()
+
+with top_r:
+    st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
+    if st.button("🌓", help="Toggle dark / light theme", key="theme_btn"):
+        st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ── If no stock selected yet, show landing prompt ────────────────────────────
+if st.session_state.symbol is None:
     st.markdown("---")
-    st.markdown("### 📑 Navigate")
-    tab_names = ["📈 Analysis", "📊 Fundamentals", "🔬 Backtesting", "⚠️ Risk", "🎯 Sector"]
-    chosen_tab = st.radio("", tab_names, index=st.session_state.active_tab,
-                          key="tab_radio", label_visibility="collapsed")
-    st.session_state.active_tab = tab_names.index(chosen_tab)
+    st.markdown("""
+    ## Welcome to Nifty 500 Professional 📊
+    **Search for any Nifty 500 stock above to get started.**
+
+    ✅ Technical Analysis (7 indicators)  
+    ✅ Fundamentals (P/E, EPS, Market Cap…)  
+    ✅ Backtesting  
+    ✅ Risk Metrics (Beta, Sharpe, Drawdown)  
+    ✅ Sector & Peer Comparison  
+    ✅ News Sentiment → BUY / SELL / HOLD
+    """)
+    st.stop()
 
 # ============================================================================
-# DATA FETCH
+# DATA FETCH (only runs when symbol is set)
 # ============================================================================
 
-with st.spinner(f"Loading {symbol}..."):
+symbol       = st.session_state.symbol
+company_name = st.session_state.company_name
+industry     = st.session_state.industry
+
+with st.spinner(f"Loading {symbol}…"):
     stock_data = fetch_stock_data(symbol)
 
 if stock_data is None:
@@ -166,29 +263,38 @@ technical       = calculate_technical_summary(stock_data)
 fundamentals    = fetch_fundamentals(symbol)
 risk_metrics    = calculate_risk_metrics(stock_data, symbol)
 backtest        = backtest_signal(symbol, stock_data=stock_data)
-signal_analysis = calculate_professional_signal(technical, [])
 
-# Header
-col_h1, col_h2, col_h3 = st.columns([1, 8, 1])
-with col_h3:
-    if st.button("🌓", help="Toggle theme"):
-        st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-        st.rerun()
+# Auto-fetch news once per symbol
+if st.session_state.news_fetched_for != symbol:
+    st.session_state.news_items = fetch_news(symbol)
+    st.session_state.news_fetched_for = symbol
+    st.session_state.selected_news = []
 
+news_items = st.session_state.news_items
+
+# Signal uses currently selected news
+signal_analysis = calculate_professional_signal(
+    technical, st.session_state.selected_news
+)
+
+# ── Stock header ──────────────────────────────────────────────────────────────
 st.markdown(f"# {escape(company_name)}")
 st.markdown(f"*{symbol}.NS | {escape(str(industry))} | Nifty 500 Constituent*")
 
 # ============================================================================
-# TAB RENDERING — controlled by sidebar radio (persists across reruns)
+# HORIZONTAL TABS
 # ============================================================================
 
-active = st.session_state.active_tab
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📈 Analysis", "📰 News & Sentiment", "📊 Fundamentals",
+    "🔬 Backtesting", "⚠️ Risk", "🎯 Sector",
+])
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 0 — ANALYSIS
+# TAB 1 — TECHNICAL ANALYSIS
 # ──────────────────────────────────────────────────────────────────────────────
 
-if active == 0:
+with tab1:
     c1, c2 = st.columns([1.2, 2])
     with c1:
         st.markdown("### Recommendation")
@@ -196,6 +302,7 @@ if active == 0:
         <div style='text-align:center;padding:20px;background:rgba(255,255,255,0.07);border-radius:10px'>
         <h2 style='color:{signal_analysis["color"]}'>{signal_analysis["signal"]}</h2>
         <p><strong>Confidence: {signal_analysis['confidence']:.0f}%</strong></p>
+        <p style='font-size:12px;opacity:0.7'>Based on technical + {len(st.session_state.selected_news)} news article(s)</p>
         </div>
         """, unsafe_allow_html=True)
     with c2:
@@ -230,7 +337,6 @@ if active == 0:
         vertical_spacing=0.03,
         subplot_titles=("Price + MA50/200 + Bollinger Bands", "MACD", "RSI (14)", "Volume"),
     )
-
     if bb_upper is not None:
         fig.add_trace(go.Scatter(x=bb_upper.index, y=bb_upper, name='BB Upper',
             line=dict(color='rgba(192,132,252,0.35)', width=1)), row=1, col=1)
@@ -240,14 +346,12 @@ if active == 0:
         fig.add_trace(go.Scatter(x=bb_mid.index, y=bb_mid, name='BB Mid',
             line=dict(color='rgba(192,132,252,0.55)', width=1, dash='dot'),
             showlegend=False), row=1, col=1)
-
     fig.add_trace(go.Scatter(x=close_s.index, y=close_s, name='Price',
         line=dict(color='#e2e8f0', width=2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=ma50_s.index, y=ma50_s, name='MA50',
         line=dict(color='#fbbf24', width=1.5, dash='dash')), row=1, col=1)
     fig.add_trace(go.Scatter(x=ma200_s.index, y=ma200_s, name='MA200',
         line=dict(color='#f87171', width=1.5, dash='dash')), row=1, col=1)
-
     if macd_s is not None and msig_s is not None:
         hist = macd_s - msig_s
         fig.add_trace(go.Bar(x=hist.index, y=hist, name='MACD Hist',
@@ -258,7 +362,6 @@ if active == 0:
         fig.add_trace(go.Scatter(x=msig_s.index, y=msig_s, name='Signal',
             line=dict(color='#fb923c', width=1.5)), row=2, col=1)
         fig.add_hline(y=0, line_color='rgba(255,255,255,0.15)', line_width=1, row=2, col=1)
-
     fig.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s, name='RSI(14)',
         line=dict(color='#34d399', width=1.5)), row=3, col=1)
     fig.add_hrect(y0=70, y1=100, fillcolor='rgba(248,113,113,0.08)', line_width=0, row=3, col=1)
@@ -266,12 +369,10 @@ if active == 0:
     fig.add_hline(y=70, line_dash="dash", line_color="rgba(248,113,113,0.5)", line_width=1, row=3, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="rgba(52,211,153,0.5)",  line_width=1, row=3, col=1)
     fig.update_yaxes(range=[0, 100], row=3, col=1)
-
     vol_colors = ['#34d399' if i == 0 or close_s.iloc[i] >= close_s.iloc[i-1]
                   else '#f87171' for i in range(len(close_s))]
     fig.add_trace(go.Bar(x=vol_s.index, y=vol_s, name='Volume',
         marker_color=vol_colors, showlegend=False), row=4, col=1)
-
     fig.update_layout(height=950, hovermode='x unified', template='plotly_dark',
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
@@ -281,10 +382,85 @@ if active == 0:
     st.plotly_chart(fig, use_container_width=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 1 — FUNDAMENTALS
+# TAB 2 — NEWS & SENTIMENT
 # ──────────────────────────────────────────────────────────────────────────────
 
-elif active == 1:
+with tab2:
+    st.markdown("### 📰 News & Sentiment Analysis")
+    st.caption("Select news articles below — their sentiment updates the BUY/SELL/HOLD recommendation in the Analysis tab.")
+
+    if not news_items:
+        st.warning("No recent news found for this stock. The recommendation is based on technicals only.")
+    else:
+        # Multi-select checkboxes for each article
+        st.markdown("**Select articles to include in recommendation:**")
+        selected = []
+        for i, item in enumerate(news_items):
+            score = item["sentiment"]
+            if score > 0.5:
+                badge = f"🟢 +{score:.1f}"
+            elif score < -0.5:
+                badge = f"🔴 {score:.1f}"
+            else:
+                badge = f"⚪ {score:.1f}"
+
+            col_cb, col_text = st.columns([0.05, 0.95])
+            with col_cb:
+                checked = st.checkbox("", key=f"news_{symbol}_{i}",
+                                      value=(item in st.session_state.selected_news))
+            with col_text:
+                st.markdown(f"{badge} &nbsp; [{escape(item['title'])}]({item['link']})")
+
+            if checked:
+                selected.append(item)
+
+        # Update selected news in session state
+        st.session_state.selected_news = selected
+
+        st.markdown("---")
+
+        # Sentiment summary
+        if selected:
+            scores = [n["sentiment"] for n in selected]
+            avg = np.mean(scores)
+            if avg > 1:
+                sent_label = "🟢 Bullish"
+                sent_color = "#34d399"
+            elif avg < -1:
+                sent_label = "🔴 Bearish"
+                sent_color = "#f87171"
+            else:
+                sent_label = "⚪ Neutral"
+                sent_color = "#9ca3af"
+
+            s1, s2, s3 = st.columns(3)
+            s1.metric("Articles Selected", len(selected))
+            s2.metric("Avg Sentiment Score", f"{avg:+.2f}")
+            s3.markdown(f"<h3 style='color:{sent_color};margin-top:20px'>{sent_label}</h3>",
+                        unsafe_allow_html=True)
+
+            st.info("💡 Switch to the **Analysis** tab to see the updated recommendation.")
+        else:
+            st.info("Select one or more articles above to factor news sentiment into the recommendation.")
+
+        # Show all articles with their scores
+        st.markdown("---")
+        st.markdown("**All recent articles:**")
+        for item in news_items:
+            score = item["sentiment"]
+            color = "#34d399" if score > 0.5 else "#f87171" if score < -0.5 else "#9ca3af"
+            st.markdown(
+                f"<span style='color:{color};font-weight:600'>{score:+.1f}</span> &nbsp;"
+                f"[{escape(item['title'])}]({item['link']}) "
+                f"<span style='opacity:0.5;font-size:12px'>{item.get('published','')[:16]}</span>",
+                unsafe_allow_html=True,
+            )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 3 — FUNDAMENTALS
+# ──────────────────────────────────────────────────────────────────────────────
+
+with tab3:
     st.markdown("### 📊 Fundamentals")
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -300,10 +476,10 @@ elif active == 1:
         st.metric("52W Low",  f"₹{fundamentals['52_week_low']:.2f}"  if fundamentals['52_week_low']  != "N/A" else "N/A")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 2 — BACKTESTING
+# TAB 4 — BACKTESTING
 # ──────────────────────────────────────────────────────────────────────────────
 
-elif active == 2:
+with tab4:
     st.markdown("### 🔬 Backtesting")
     if backtest:
         c1, c2, c3, c4 = st.columns(4)
@@ -320,10 +496,10 @@ elif active == 2:
         st.warning("Not enough historical data for backtesting this stock.")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 3 — RISK METRICS
+# TAB 5 — RISK METRICS
 # ──────────────────────────────────────────────────────────────────────────────
 
-elif active == 3:
+with tab5:
     st.markdown("### ⚠️ Risk Metrics")
     c1, c2, c3, c4 = st.columns(4)
     v = risk_metrics.get('volatility',   'N/A')
@@ -336,14 +512,11 @@ elif active == 3:
     c4.metric("Max Drawdown", f"{d:.2f}%" if d != "N/A" else "N/A", help=TOOLTIPS.get("DRAWDOWN", ""))
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 4 — SECTOR ANALYSIS
-# Peer data loads automatically — no button needed.
-# Each peer fetched once, cached 5 min, reused for table + chart.
+# TAB 6 — SECTOR ANALYSIS
 # ──────────────────────────────────────────────────────────────────────────────
 
-elif active == 4:
+with tab6:
     st.markdown("### 🎯 Sector Analysis")
-
     current_sector = find_sector(symbol, industry)
     st.markdown(f"**{symbol}** · Sector: **{current_sector or 'Not mapped'}** · Industry: *{industry}*")
     st.markdown("---")
@@ -352,9 +525,8 @@ elif active == 4:
     all_symbols  = [symbol] + peer_symbols
 
     if not peer_symbols:
-        st.info(f"No peers mapped for **{current_sector or industry}**. Showing standalone stats only.")
+        st.info(f"No peers mapped for **{current_sector or industry}**.")
 
-    # Auto-fetch all peers (cached per symbol, so fast on repeat visits)
     peer_closes = {}
     if len(all_symbols) > 1:
         prog = st.progress(0, text="Loading peer data…")
@@ -365,14 +537,11 @@ elif active == 4:
             prog.progress((i + 1) / len(all_symbols), text=f"Loaded {sym}")
         prog.empty()
     else:
-        # Only one stock — just use what we already have
-        close_s = technical['close_series']
-        peer_closes[symbol] = close_s
+        peer_closes[symbol] = technical['close_series']
 
     if not peer_closes:
-        st.warning("Could not load data. Yahoo Finance may be rate-limiting — try again in a minute.")
+        st.warning("Could not load peer data. Try again in a moment.")
     else:
-        # ── Comparison table ─────────────────────────────────────────────
         st.markdown("#### 📋 Peer Comparison")
         if peer_symbols:
             st.caption(f"Comparing: {', '.join(peer_closes.keys())}")
@@ -380,17 +549,15 @@ elif active == 4:
         rows = {}
         for sym, c in peer_closes.items():
             try:
-                r1y = (c.iloc[-1] - c.iloc[0])   / c.iloc[0]   * 100
-                r3m = (c.iloc[-1] - c.iloc[-66])  / c.iloc[-66] * 100 if len(c) > 66 else 0.0
-                r1m = (c.iloc[-1] - c.iloc[-22])  / c.iloc[-22] * 100 if len(c) > 22 else 0.0
-                vol = c.pct_change().std() * np.sqrt(252) * 100
-                rows[sym] = {
-                    "Price (₹)":  round(float(c.iloc[-1]), 2),
-                    "1M Return":  round(float(r1m), 2),
-                    "3M Return":  round(float(r3m), 2),
-                    "1Y Return":  round(float(r1y), 2),
-                    "Volatility": round(float(vol), 2),
-                }
+                r1y = (c.iloc[-1]-c.iloc[0])/c.iloc[0]*100
+                r3m = (c.iloc[-1]-c.iloc[-66])/c.iloc[-66]*100 if len(c)>66 else 0.0
+                r1m = (c.iloc[-1]-c.iloc[-22])/c.iloc[-22]*100 if len(c)>22 else 0.0
+                vol = c.pct_change().std()*np.sqrt(252)*100
+                rows[sym] = {"Price (₹)": round(float(c.iloc[-1]),2),
+                             "1M Return": round(float(r1m),2),
+                             "3M Return": round(float(r3m),2),
+                             "1Y Return": round(float(r1y),2),
+                             "Volatility": round(float(vol),2)}
             except Exception:
                 pass
 
@@ -399,66 +566,48 @@ elif active == 4:
             df_p.index.name = "Symbol"
 
             def _col(val):
-                try:
-                    return f"color: {'#34d399' if float(val) >= 0 else '#f87171'}"
-                except Exception:
-                    return ""
+                try: return f"color: {'#34d399' if float(val)>=0 else '#f87171'}"
+                except: return ""
 
             st.dataframe(
-                df_p.style
-                    .applymap(_col, subset=["1M Return", "3M Return", "1Y Return"])
-                    .format({"Price (₹)": "₹{:.2f}", "1M Return": "{:+.2f}%",
-                             "3M Return": "{:+.2f}%", "1Y Return": "{:+.2f}%",
-                             "Volatility": "{:.2f}%"}),
-                use_container_width=True,
-            )
+                df_p.style.applymap(_col, subset=["1M Return","3M Return","1Y Return"])
+                    .format({"Price (₹)":"₹{:.2f}","1M Return":"{:+.2f}%",
+                             "3M Return":"{:+.2f}%","1Y Return":"{:+.2f}%","Volatility":"{:.2f}%"}),
+                use_container_width=True)
 
-            # ── Normalised chart ─────────────────────────────────────────
             st.markdown("#### 📈 1-Year Normalised Performance")
-            st.caption("All stocks rebased to 100 at start of period")
-            COLORS = ['#c084fc', '#fbbf24', '#34d399', '#60a5fa', '#fb923c']
+            COLORS = ['#c084fc','#fbbf24','#34d399','#60a5fa','#fb923c']
             fig_n = go.Figure()
-            for i, (sym, c) in enumerate(peer_closes.items()):
+            for i,(sym,c) in enumerate(peer_closes.items()):
                 try:
-                    norm = c / c.iloc[0] * 100
+                    norm = c/c.iloc[0]*100
                     fig_n.add_trace(go.Scatter(x=norm.index, y=norm, name=sym,
-                        line=dict(color=COLORS[i % len(COLORS)], width=2)))
-                except Exception:
-                    pass
+                        line=dict(color=COLORS[i%len(COLORS)], width=2)))
+                except Exception: pass
             fig_n.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.25)")
             fig_n.update_layout(height=400, template='plotly_dark',
                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
                 hovermode='x unified', yaxis_title="Rebased to 100",
-                margin=dict(l=10, r=10, t=20, b=10))
+                margin=dict(l=10,r=10,t=20,b=10))
             st.plotly_chart(fig_n, use_container_width=True)
 
-            # ── Return bar chart — period selector does NOT reset tab ────
             st.markdown("#### 📊 Return Comparison")
-            # Use session state for period so selecting it doesn't reset tab
-            if "sector_period" not in st.session_state:
-                st.session_state["sector_period"] = "1Y Return"
-
             period_col = st.session_state["sector_period"]
-            p1, p2, p3 = st.columns(3)
-            if p1.button("1M Return",  type="primary" if period_col == "1M Return"  else "secondary", key="p1m"):
-                st.session_state["sector_period"] = "1M Return"
-                period_col = "1M Return"
-            if p2.button("3M Return",  type="primary" if period_col == "3M Return"  else "secondary", key="p3m"):
-                st.session_state["sector_period"] = "3M Return"
-                period_col = "3M Return"
-            if p3.button("1Y Return",  type="primary" if period_col == "1Y Return"  else "secondary", key="p1y"):
-                st.session_state["sector_period"] = "1Y Return"
-                period_col = "1Y Return"
+            p1,p2,p3 = st.columns(3)
+            if p1.button("1M", type="primary" if period_col=="1M Return" else "secondary", key="sp1m"):
+                st.session_state["sector_period"] = "1M Return"; st.rerun()
+            if p2.button("3M", type="primary" if period_col=="3M Return" else "secondary", key="sp3m"):
+                st.session_state["sector_period"] = "3M Return"; st.rerun()
+            if p3.button("1Y", type="primary" if period_col=="1Y Return" else "secondary", key="sp1y"):
+                st.session_state["sector_period"] = "1Y Return"; st.rerun()
 
             bar_vals = df_p[period_col]
-            fig_b = go.Figure(go.Bar(
-                x=bar_vals.index, y=bar_vals,
-                marker_color=['#34d399' if v >= 0 else '#f87171' for v in bar_vals],
-                text=[f"{v:+.1f}%" for v in bar_vals], textposition='outside',
-            ))
+            fig_b = go.Figure(go.Bar(x=bar_vals.index, y=bar_vals,
+                marker_color=['#34d399' if v>=0 else '#f87171' for v in bar_vals],
+                text=[f"{v:+.1f}%" for v in bar_vals], textposition='outside'))
             fig_b.update_layout(height=350, template='plotly_dark',
                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
-                yaxis_title=f"{period_col} (%)", margin=dict(l=10, r=10, t=10, b=10))
+                yaxis_title=f"{period_col} (%)", margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(fig_b, use_container_width=True)
 
 # ============================================================================
