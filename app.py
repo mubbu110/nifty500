@@ -283,8 +283,8 @@ st.markdown(f"*{symbol}.NS | {escape(str(industry))} | Nifty 500 Constituent*")
 # ============================================================================
 
 TAB_NAMES = [
-    "📈 Analysis", "📰 News & Sentiment", "📊 Fundamentals",
-    "🔬 Backtesting", "⚠️ Risk", "🎯 Sector",
+    "📈 Analysis", "📰 News & Sentiment", "🎯 Sector",
+    "📊 Fundamentals", "🔬 Backtesting", "⚠️ Risk",
 ]
 
 # Inject JS that:
@@ -320,6 +320,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(TAB_NAMES)
+
+# tab1 = Analysis, tab2 = News & Sentiment, tab3 = Sector
+# tab4 = Fundamentals, tab5 = Backtesting, tab6 = Risk
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 1 — TECHNICAL ANALYSIS
@@ -413,85 +416,128 @@ with tab1:
     st.plotly_chart(fig, use_container_width=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 2 — NEWS & SENTIMENT
+# TAB 2 — NEWS & SENTIMENT  (includes BUY/SELL/HOLD based on news)
 # ──────────────────────────────────────────────────────────────────────────────
 
 with tab2:
-    st.markdown("### 📰 News & Sentiment Analysis")
-    st.caption("Select news articles below — their sentiment updates the BUY/SELL/HOLD recommendation in the Analysis tab.")
+    st.markdown("### 📰 News & Sentiment")
 
-    if not news_items:
-        st.warning("No recent news found for this stock. The recommendation is based on technicals only.")
-    else:
-        # Multi-select checkboxes for each article
-        st.markdown("**Select articles to include in recommendation:**")
-        selected = []
+    # ── Collect selected news from checkboxes (done BEFORE signal calc) ──
+    selected = []
+    if news_items:
         for i, item in enumerate(news_items):
-            score = item["sentiment"]
-            if score > 0.5:
-                badge = f"🟢 +{score:.1f}"
-            elif score < -0.5:
-                badge = f"🔴 {score:.1f}"
-            else:
-                badge = f"⚪ {score:.1f}"
-
-            col_cb, col_text = st.columns([0.05, 0.95])
-            with col_cb:
-                checked = st.checkbox("", key=f"news_{symbol}_{i}",
-                                      value=(item in st.session_state.selected_news))
-            with col_text:
-                st.markdown(f"{badge} &nbsp; [{escape(item['title'])}]({item['link']})")
-
-            if checked:
+            if st.session_state.get(f"news_{symbol}_{i}", False):
                 selected.append(item)
+    st.session_state.selected_news = selected
 
-        # Update selected news in session state
-        st.session_state.selected_news = selected
+    # ── News-only signal ─────────────────────────────────────────────────
+    news_signal_analysis = calculate_professional_signal(technical, selected)
 
-        st.markdown("---")
+    # Signal display
+    sig_col, detail_col = st.columns([1, 2])
+    with sig_col:
+        sig = news_signal_analysis
+        st.markdown(f"""
+        <div style='text-align:center;padding:20px;background:rgba(255,255,255,0.07);
+                    border-radius:12px;margin-bottom:10px'>
+          <div style='font-size:13px;opacity:0.6;margin-bottom:6px'>
+            News-Adjusted Signal
+          </div>
+          <div style='font-size:28px;font-weight:800;color:{sig["color"]}'>
+            {sig["signal"]}
+          </div>
+          <div style='font-size:13px;margin-top:6px'>
+            Confidence: <strong>{sig["confidence"]:.0f}%</strong>
+          </div>
+          <div style='font-size:11px;opacity:0.5;margin-top:4px'>
+            {len(selected)} article(s) factored in
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        # Sentiment summary
+        # News sentiment gauge
         if selected:
             scores = [n["sentiment"] for n in selected]
-            avg = np.mean(scores)
-            if avg > 1:
-                sent_label = "🟢 Bullish"
-                sent_color = "#34d399"
-            elif avg < -1:
-                sent_label = "🔴 Bearish"
-                sent_color = "#f87171"
+            avg_score = float(np.mean(scores))
+            if avg_score >= 1.5:
+                news_verdict, news_color = "🟢 Strong Buy", "#34d399"
+            elif avg_score >= 0.3:
+                news_verdict, news_color = "🟡 Mildly Bullish", "#fbbf24"
+            elif avg_score <= -1.5:
+                news_verdict, news_color = "🔴 Strong Sell", "#f87171"
+            elif avg_score <= -0.3:
+                news_verdict, news_color = "🟠 Mildly Bearish", "#fb923c"
             else:
-                sent_label = "⚪ Neutral"
-                sent_color = "#9ca3af"
+                news_verdict, news_color = "⚪ Neutral", "#9ca3af"
 
-            s1, s2, s3 = st.columns(3)
-            s1.metric("Articles Selected", len(selected))
-            s2.metric("Avg Sentiment Score", f"{avg:+.2f}")
-            s3.markdown(f"<h3 style='color:{sent_color};margin-top:20px'>{sent_label}</h3>",
-                        unsafe_allow_html=True)
-
-            st.info("💡 Switch to the **Analysis** tab to see the updated recommendation.")
+            st.markdown(f"""
+            <div style='text-align:center;padding:14px;background:rgba(255,255,255,0.05);
+                        border-radius:10px'>
+              <div style='font-size:12px;opacity:0.6'>News Sentiment Only</div>
+              <div style='font-size:20px;font-weight:700;color:{news_color}'>{news_verdict}</div>
+              <div style='font-size:13px;opacity:0.7'>Avg score: {avg_score:+.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.info("Select one or more articles above to factor news sentiment into the recommendation.")
+            st.info("Select articles ↓ to generate news signal")
 
-        # Show all articles with their scores
-        st.markdown("---")
-        st.markdown("**All recent articles:**")
-        for item in news_items:
+    with detail_col:
+        st.markdown("**Signal breakdown:**")
+        for conf in sig["confirmations"]:
+            st.markdown(f"- {conf}")
+
+    st.markdown("---")
+
+    # ── Article selection ─────────────────────────────────────────────────
+    if not news_items:
+        st.warning("No recent news found. Recommendation is based on technicals only.")
+    else:
+        st.markdown("**Select articles to include in the signal:**")
+        st.caption("Tick articles → signal above updates instantly")
+
+        newly_selected = []
+        for i, item in enumerate(news_items):
             score = item["sentiment"]
-            color = "#34d399" if score > 0.5 else "#f87171" if score < -0.5 else "#9ca3af"
-            st.markdown(
-                f"<span style='color:{color};font-weight:600'>{score:+.1f}</span> &nbsp;"
-                f"[{escape(item['title'])}]({item['link']}) "
-                f"<span style='opacity:0.5;font-size:12px'>{item.get('published','')[:16]}</span>",
-                unsafe_allow_html=True,
-            )
+            if score >= 1.5:
+                badge = f"🟢 **{score:+.1f}** BULLISH"
+                badge_color = "#34d399"
+            elif score >= 0.3:
+                badge = f"🟡 **{score:+.1f}** mildly bullish"
+                badge_color = "#fbbf24"
+            elif score <= -1.5:
+                badge = f"🔴 **{score:+.1f}** BEARISH"
+                badge_color = "#f87171"
+            elif score <= -0.3:
+                badge = f"🟠 **{score:+.1f}** mildly bearish"
+                badge_color = "#fb923c"
+            else:
+                badge = f"⚪ **{score:+.1f}** neutral"
+                badge_color = "#9ca3af"
+
+            cb_col, text_col = st.columns([0.04, 0.96])
+            with cb_col:
+                checked = st.checkbox(
+                    "", key=f"news_{symbol}_{i}",
+                    value=st.session_state.get(f"news_{symbol}_{i}", False),
+                )
+            with text_col:
+                pub = item.get("published", "")[:16]
+                st.markdown(
+                    f"<span style='color:{badge_color};font-size:13px'>{badge}</span>"
+                    f" &nbsp; [{escape(item['title'])}]({item['link']})"
+                    f" <span style='opacity:0.4;font-size:11px'>{pub}</span>",
+                    unsafe_allow_html=True,
+                )
+            if checked:
+                newly_selected.append(item)
+
+        st.session_state.selected_news = newly_selected
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 3 — FUNDAMENTALS
+# TAB 4 — FUNDAMENTALS
 # ──────────────────────────────────────────────────────────────────────────────
 
-with tab3:
+with tab4:
     st.markdown("### 📊 Fundamentals")
     st.caption("All values calculated from raw financial statements — no pre-computed ratios.")
 
@@ -544,10 +590,10 @@ with tab3:
                   help="Formula: Sum of Total Revenue over last 4 quarters (income statement)")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 4 — BACKTESTING
+# TAB 5 — BACKTESTING
 # ──────────────────────────────────────────────────────────────────────────────
 
-with tab4:
+with tab5:
     st.markdown("### 🔬 Backtesting")
     if backtest:
         c1, c2, c3, c4 = st.columns(4)
@@ -564,10 +610,10 @@ with tab4:
         st.warning("Not enough historical data for backtesting this stock.")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 5 — RISK METRICS
+# TAB 6 — RISK METRICS
 # ──────────────────────────────────────────────────────────────────────────────
 
-with tab5:
+with tab6:
     st.markdown("### ⚠️ Risk Metrics")
     c1, c2, c3, c4 = st.columns(4)
     v = risk_metrics.get('volatility',   'N/A')
@@ -580,10 +626,10 @@ with tab5:
     c4.metric("Max Drawdown", f"{d:.2f}%" if d != "N/A" else "N/A", help=TOOLTIPS.get("DRAWDOWN", ""))
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 6 — SECTOR ANALYSIS
+# TAB 3 — SECTOR ANALYSIS
 # ──────────────────────────────────────────────────────────────────────────────
 
-with tab6:
+with tab3:
     st.markdown("### 🎯 Sector Analysis")
     current_sector = find_sector(symbol, industry)
     st.markdown(f"**{symbol}** · Sector: **{current_sector or 'Not mapped'}** · Industry: *{industry}*")
