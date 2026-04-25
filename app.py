@@ -812,16 +812,17 @@ with tab5:
         c1.metric("Win Rate",          f"{backtest['win_rate']:.1f}%")
         c2.metric("Total Trades",      f"{backtest['total_trades']}")
         c3.metric("Cumulative Return", f"{backtest['cumulative_return']:.2f}%")
-        c4.metric("Max Drawdown",
+        c4.metric("Max Drawdown (Strategy)",
                   f"-{abs(backtest['max_drawdown']):.2f}%",
                   delta=f"-{abs(backtest['max_drawdown']):.2f}%",
                   delta_color="inverse",
-                  help="Maximum peak-to-trough loss. Always negative — larger magnitude = worse drawdown.")
+                  help="Worst peak-to-trough loss DURING ACTIVE TRADES only (when strategy signal was BUY). Not the same as full price drawdown.")
         st.markdown("---")
         c1b, c2b = st.columns(2)
         c1b.metric("Sharpe Ratio",     f"{backtest['sharpe_ratio']:.2f}")
         c2b.metric("Avg Daily Return", f"{backtest['avg_daily_return']:.3f}%")
         st.info("📌 Strategy: Price > MA200 · RSI 40–70 · MACD positive · Volume above 20d avg")
+        st.caption("ℹ️ **Max Drawdown (Strategy)** measures loss only during active BUY signals. The Risk tab shows **Max Drawdown (Full History)** — the worst loss over the entire 3-year price history, which will always be larger.")
     else:
         st.warning("Not enough historical data for backtesting this stock.")
 
@@ -839,11 +840,11 @@ with tab6:
     c1.metric("Volatility",   f"{v:.2f}%" if v != "N/A" else "N/A", help="Annualized price volatility")
     c2.metric("Sharpe Ratio", f"{s:.2f}"  if s != "N/A" else "N/A", help=TOOLTIPS.get("SHARPE", ""))
     c3.metric("Beta",         f"{b:.2f}"  if b != "N/A" else "N/A", help=TOOLTIPS.get("BETA", ""))
-    c4.metric("Max Drawdown",
+    c4.metric("Max Drawdown (Full History)",
               f"-{abs(float(d)):.2f}%" if d != "N/A" else "N/A",
               delta=f"-{abs(float(d)):.2f}%" if d != "N/A" else None,
               delta_color="inverse",
-              help=TOOLTIPS.get("DRAWDOWN", "Maximum peak-to-trough loss — always negative"))
+              help="Worst peak-to-trough loss over the FULL 3-year price history, regardless of any trading signal. Higher than strategy drawdown since it includes all bad periods.")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 3 — SECTOR ANALYSIS
