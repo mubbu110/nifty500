@@ -812,7 +812,11 @@ with tab5:
         c1.metric("Win Rate",          f"{backtest['win_rate']:.1f}%")
         c2.metric("Total Trades",      f"{backtest['total_trades']}")
         c3.metric("Cumulative Return", f"{backtest['cumulative_return']:.2f}%")
-        c4.metric("Max Drawdown",      f"{abs(backtest['max_drawdown']):.2f}%")
+        c4.metric("Max Drawdown",
+                  f"-{abs(backtest['max_drawdown']):.2f}%",
+                  delta=f"-{abs(backtest['max_drawdown']):.2f}%",
+                  delta_color="inverse",
+                  help="Maximum peak-to-trough loss. Always negative — larger magnitude = worse drawdown.")
         st.markdown("---")
         c1b, c2b = st.columns(2)
         c1b.metric("Sharpe Ratio",     f"{backtest['sharpe_ratio']:.2f}")
@@ -835,7 +839,11 @@ with tab6:
     c1.metric("Volatility",   f"{v:.2f}%" if v != "N/A" else "N/A", help="Annualized price volatility")
     c2.metric("Sharpe Ratio", f"{s:.2f}"  if s != "N/A" else "N/A", help=TOOLTIPS.get("SHARPE", ""))
     c3.metric("Beta",         f"{b:.2f}"  if b != "N/A" else "N/A", help=TOOLTIPS.get("BETA", ""))
-    c4.metric("Max Drawdown", f"{d:.2f}%" if d != "N/A" else "N/A", help=TOOLTIPS.get("DRAWDOWN", ""))
+    c4.metric("Max Drawdown",
+              f"-{abs(float(d)):.2f}%" if d != "N/A" else "N/A",
+              delta=f"-{abs(float(d)):.2f}%" if d != "N/A" else None,
+              delta_color="inverse",
+              help=TOOLTIPS.get("DRAWDOWN", "Maximum peak-to-trough loss — always negative"))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 3 — SECTOR ANALYSIS
