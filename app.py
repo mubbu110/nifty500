@@ -279,13 +279,47 @@ st.markdown(f"# {escape(company_name)}")
 st.markdown(f"*{symbol}.NS | {escape(str(industry))} | Nifty 500 Constituent*")
 
 # ============================================================================
-# HORIZONTAL TABS
+# HORIZONTAL TABS — with JS tab-persistence across reruns
 # ============================================================================
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+TAB_NAMES = [
     "📈 Analysis", "📰 News & Sentiment", "📊 Fundamentals",
     "🔬 Backtesting", "⚠️ Risk", "🎯 Sector",
-])
+]
+
+# Inject JS that:
+#  1. On load: clicks the tab matching session state (restores position after rerun)
+#  2. On tab click: posts the tab index back to Streamlit via a hidden input
+st.markdown("""
+<script>
+(function() {
+    // Read desired tab from sessionStorage (survives Streamlit rerun)
+    const desired = parseInt(sessionStorage.getItem('active_tab') || '0');
+
+    function clickTab(idx) {
+        const tabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+        if (tabs && tabs[idx]) {
+            tabs[idx].click();
+        }
+    }
+
+    // Click desired tab shortly after DOM is ready
+    setTimeout(() => clickTab(desired), 120);
+
+    // Listen for tab clicks and save to sessionStorage
+    setTimeout(() => {
+        const tabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+        tabs.forEach((tab, idx) => {
+            tab.addEventListener('click', () => {
+                sessionStorage.setItem('active_tab', String(idx));
+            });
+        });
+    }, 300);
+})();
+</script>
+""", unsafe_allow_html=True)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(TAB_NAMES)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 1 — TECHNICAL ANALYSIS
@@ -752,14 +786,16 @@ with tab6:
             st.plotly_chart(fig_n, use_container_width=True)
 
             st.markdown("#### 📊 Return Comparison")
-            period_col = st.session_state["sector_period"]
-            p1,p2,p3 = st.columns(3)
-            if p1.button("1M", type="primary" if period_col=="1M Return" else "secondary", key="sp1m"):
-                st.session_state["sector_period"] = "1M Return"; st.rerun()
-            if p2.button("3M", type="primary" if period_col=="3M Return" else "secondary", key="sp3m"):
-                st.session_state["sector_period"] = "3M Return"; st.rerun()
-            if p3.button("1Y", type="primary" if period_col=="1Y Return" else "secondary", key="sp1y"):
-                st.session_state["sector_period"] = "1Y Return"; st.rerun()
+            period_col = st.radio(
+                "Period",
+                ["1M Return", "3M Return", "1Y Return"],
+                index=["1M Return", "3M Return", "1Y Return"].index(
+                    st.session_state.get("sector_period", "1Y Return")
+                ),
+                horizontal=True,
+                key=f"sector_period_radio_{symbol}",
+            )
+            st.session_state["sector_period"] = period_col
 
             bar_vals = df_p[period_col]
             fig_b = go.Figure(go.Bar(x=bar_vals.index, y=bar_vals,
