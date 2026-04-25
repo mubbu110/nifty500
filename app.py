@@ -1,11 +1,6 @@
 """
-Professional Nifty 500 Dashboard
-- No sidebar navigation: horizontal tabs on top
-- Stock search + select merged into one smart input
-- No stock auto-selected on first load
-- News section with sentiment feeding BUY/SELL/HOLD
-- Only one theme toggle (top-right)
-- Tabs never reset on interaction
+StockSense India — Intelligent Stock Analysis for the Indian Market
+Nifty 500 coverage · 7 technical indicators · News sentiment · Fundamentals · Backtesting · Risk · Sector comparison
 """
 
 import time
@@ -31,8 +26,8 @@ from utils import (
 # ============================================================================
 
 st.set_page_config(
-    page_title="Nifty 500 Professional",
-    page_icon="📊",
+    page_title="StockSense India",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -407,7 +402,7 @@ all_labels = stocks["Label"].tolist()
 top_l, top_m, top_r = st.columns([2, 6, 1])
 
 with top_l:
-    st.markdown("### 📊 Nifty 500 Professional")
+    st.markdown("### 🔍 StockSense India")
 
 with top_m:
     # Single selectbox — Streamlit's built-in search works exactly like the index dropdown
@@ -449,15 +444,15 @@ with top_r:
 if st.session_state.symbol is None:
     st.markdown("---")
     st.markdown("""
-    ## Welcome to Nifty 500 Professional 📊
-    **Search for any Nifty 500 stock above to get started.**
+    ## Welcome to StockSense India 🔍
+    **Intelligent stock analysis for the Indian market. Search any Nifty 500 stock above to get started.**
 
-    ✅ Technical Analysis (7 indicators)  
-    ✅ Fundamentals (P/E, EPS, Market Cap…)  
-    ✅ Backtesting  
-    ✅ Risk Metrics (Beta, Sharpe, Drawdown)  
-    ✅ Sector & Peer Comparison  
-    ✅ News Sentiment → BUY / SELL / HOLD
+    ✅ Technical Analysis (7 indicators — Price, MA50/200, Bollinger, MACD, RSI, Volume)
+    ✅ News Sentiment → BUY / SELL / HOLD signal
+    ✅ Sector & Peer Comparison with index overlays
+    ✅ Fundamentals calculated from raw financial statements
+    ✅ Backtesting with Win Rate, Sharpe Ratio & Drawdown
+    ✅ Risk Metrics — Beta, Volatility, Max Drawdown
     """)
     st.stop()
 
@@ -496,7 +491,7 @@ signal_analysis = calculate_professional_signal(
 
 # ── Stock header ──────────────────────────────────────────────────────────────
 st.markdown(f"# {escape(company_name)}")
-st.markdown(f"*{symbol}.NS | {escape(str(industry))} | Nifty 500 Constituent*")
+st.markdown(f"*{symbol}.NS | {escape(str(industry))} | NSE Listed*")
 
 # ============================================================================
 # HORIZONTAL TABS — with JS tab-persistence across reruns
@@ -1078,4 +1073,4 @@ with tab3:
 # ============================================================================
 
 st.markdown("---")
-st.markdown("⚠️ **Educational Use Only** | Not financial advice. Always do your own research.")
+st.markdown("**StockSense India** · ⚠️ Educational use only · Not financial advice · Always do your own research")
