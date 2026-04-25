@@ -443,7 +443,6 @@ with tab2:
     # ── News-only signal ─────────────────────────────────────────────────
     news_signal_analysis = calculate_professional_signal(technical, selected)
 
-    # Signal display — identical layout to Analysis tab
     sig_col, detail_col = st.columns([1.2, 2])
     with sig_col:
         sig = news_signal_analysis
@@ -452,7 +451,7 @@ with tab2:
         <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
                     border-radius:12px;margin-bottom:12px'>
           <h3 style='margin:0 0 6px 0;font-size:15px;font-weight:400;opacity:0.6'>
-            News-Adjusted Signal
+            Technical + News Signal
           </h3>
           <h2 style='margin:0;font-size:36px;font-weight:800;color:{sig["color"]}'>
             {sig["signal"]}
@@ -461,36 +460,10 @@ with tab2:
             <strong>Confidence: {sig["confidence"]:.0f}%</strong>
           </p>
           <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
-            {len(selected)} article(s) factored in
+            Based on technical + {len(selected)} news article(s)
           </p>
         </div>
         """, unsafe_allow_html=True)
-
-        # News sentiment gauge
-        if selected:
-            scores = [n["sentiment"] for n in selected]
-            avg_score = float(np.mean(scores))
-            if avg_score >= 1.5:
-                news_verdict, news_color = "🟢 Strong Buy", "#34d399"
-            elif avg_score >= 0.3:
-                news_verdict, news_color = "🟡 Mildly Bullish", "#fbbf24"
-            elif avg_score <= -1.5:
-                news_verdict, news_color = "🔴 Strong Sell", "#f87171"
-            elif avg_score <= -0.3:
-                news_verdict, news_color = "🟠 Mildly Bearish", "#fb923c"
-            else:
-                news_verdict, news_color = "⚪ Neutral", "#9ca3af"
-
-            st.markdown(f"""
-            <div style='text-align:center;padding:14px;background:rgba(255,255,255,0.05);
-                        border-radius:10px'>
-              <div style='font-size:12px;opacity:0.6'>News Sentiment Only</div>
-              <div style='font-size:20px;font-weight:700;color:{news_color}'>{news_verdict}</div>
-              <div style='font-size:13px;opacity:0.7'>Avg score: {avg_score:+.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.info("Select articles ↓ to generate news signal")
 
     with detail_col:
         st.markdown("### Signal Confirmations")
