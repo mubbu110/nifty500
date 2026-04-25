@@ -468,7 +468,9 @@ with tab3:
         st.metric("Market Cap",  f"₹{fundamentals['market_cap']/1e12:.2f}T" if fundamentals['market_cap']     != "N/A" else "N/A")
         st.metric("EPS",         f"₹{fundamentals['eps']:.2f}"              if fundamentals['eps']            != "N/A" else "N/A")
     with c2:
-        st.metric("Dividend Yield", f"{fundamentals['dividend_yield']*100:.2f}%" if fundamentals['dividend_yield'] != "N/A" else "N/A")
+        st.metric("Dividend Yield",
+                  f"{fundamentals['dividend_yield']:.2f}%" if fundamentals['dividend_yield'] != "N/A" else "N/A",
+                  help="Annual dividends paid (last 1Y) ÷ current price × 100")
         st.metric("Debt/Equity",    f"{fundamentals['debt_to_equity']:.2f}"      if fundamentals['debt_to_equity'] != "N/A" else "N/A")
         st.metric("Profit Margin",  f"{fundamentals['profit_margin']*100:.2f}%"  if fundamentals['profit_margin']  != "N/A" else "N/A")
     with c3:
@@ -594,27 +596,65 @@ with tab6:
 
             # ── Index overlay controls ────────────────────────────────────
             st.markdown("**➕ Add index overlay:**")
-            idx_c1, idx_c2, idx_c3 = st.columns(3)
-            show_nifty50  = idx_c1.checkbox("📊 Nifty 50",     key=f"idx_n50_{symbol}",  value=False)
-            show_niftymid = idx_c2.checkbox("📊 Nifty Midcap", key=f"idx_mid_{symbol}",  value=False)
-            show_sensex   = idx_c3.checkbox("📊 Sensex",        key=f"idx_sen_{symbol}",  value=False)
 
-            INDEX_MAP = {
-                "Nifty 50":     "^NSEI",
-                "Nifty Midcap": "^NSEMDCP50",
-                "Sensex":       "^BSESN",
+            ALL_INDICES = {
+                # Broad Market
+                "Nifty 50":                "^NSEI",
+                "Nifty 100":               "^CNX100",
+                "Nifty 200":               "^CNX200",
+                "Nifty 500":               "^CNX500",
+                "Nifty Next 50":           "^NSMIDCP",
+                "Sensex":                  "^BSESN",
+                "BSE 100":                 "BSE-100.BO",
+                "BSE 500":                 "BSE-500.BO",
+                # Mid & Small Cap
+                "Nifty Midcap 50":         "^NSEMDCP50",
+                "Nifty Midcap 100":        "NIFTY_MIDCAP_100.NS",
+                "Nifty Smallcap 100":      "^CNXSC",
+                "Nifty Smallcap 250":      "NIFTY_SMLCAP_250.NS",
+                "Nifty Microcap 250":      "NIFTY_MICROCAP250.NS",
+                "Nifty LargeMidcap 250":   "NIFTY_LARGEMID250.NS",
+                # Sector
+                "Nifty Bank":              "^NSEBANK",
+                "Nifty IT":                "^CNXIT",
+                "Nifty Auto":              "^CNXAUTO",
+                "Nifty Pharma":            "^CNXPHARMA",
+                "Nifty FMCG":              "^CNXFMCG",
+                "Nifty Financial Services":"NIFTY_FIN_SERVICE.NS",
+                "Nifty Metal":             "^CNXMETAL",
+                "Nifty Energy":            "^CNXENERGY",
+                "Nifty Realty":            "^CNXREALTY",
+                "Nifty Media":             "^CNXMEDIA",
+                "Nifty PSU Bank":          "^CNXPSUBANK",
+                "Nifty Private Bank":      "NIFTY_PVT_BANK.NS",
+                "Nifty Infrastructure":    "^CNXINFRA",
+                "Nifty Commodities":       "^CNXCMDT",
+                "Nifty Consumption":       "^CNXCONSUM",
+                "Nifty Healthcare":        "NIFTY_HEALTHCARE.NS",
+                "Nifty India Digital":     "NIFTY_IND_DIGITAL.NS",
+                "Nifty Oil & Gas":         "NIFTY_OIL_GAS.NS",
+                "Nifty Capital Markets":   "NIFTY_CAPITAL_MKT.NS",
+                # Strategy / Theme
+                "Nifty Div Opportunities": "^CNXDIVOP",
+                "Nifty Growth Sectors 15": "^CNXGS15",
+                "Nifty Alpha 50":          "NIFTY_ALPHA_50.NS",
+                "Nifty Quality 30":        "NIFTY_QUALITY30.NS",
+                "Nifty100 Low Volatility": "NIFTY100_LOWVOL30.NS",
             }
-            INDEX_COLORS = {
-                "Nifty 50":     "#94a3b8",
-                "Nifty Midcap": "#7dd3fc",
-                "Sensex":       "#fdba74",
-            }
-            indices_to_show = []
-            if show_nifty50:  indices_to_show.append("Nifty 50")
-            if show_niftymid: indices_to_show.append("Nifty Midcap")
-            if show_sensex:   indices_to_show.append("Sensex")
 
-            # Fetch index data (cached)
+            INDEX_COLORS_MAP = [
+                '#94a3b8','#fdba74','#7dd3fc','#a3e635','#f9a8d4',
+                '#6ee7b7','#c4b5fd','#fde68a','#bfdbfe','#fca5a5',
+            ]
+
+            selected_indices = st.multiselect(
+                "Choose indices to overlay on chart",
+                options=list(ALL_INDICES.keys()),
+                default=[],
+                key=f"idx_multiselect_{symbol}",
+                placeholder="Select one or more Nifty / BSE indices…",
+            )
+
             @st.cache_data(ttl=300, show_spinner=False)
             def _fetch_index(ticker_sym):
                 try:
@@ -654,16 +694,17 @@ with tab6:
                     pass
 
             # Add selected indices
-            for idx_name in indices_to_show:
-                idx_close = _fetch_index(INDEX_MAP[idx_name])
+            for ci, idx_name in enumerate(selected_indices):
+                idx_close = _fetch_index(ALL_INDICES[idx_name])
                 if idx_close is not None:
                     try:
                         norm_idx = idx_close / idx_close.iloc[0] * 100
+                        color = INDEX_COLORS_MAP[ci % len(INDEX_COLORS_MAP)]
                         fig_n.add_trace(go.Scatter(
                             x=norm_idx.index, y=norm_idx,
                             name=idx_name,
-                            line=dict(color=INDEX_COLORS[idx_name], width=2, dash='dash'),
-                            opacity=0.8,
+                            line=dict(color=color, width=2, dash='dash'),
+                            opacity=0.85,
                         ))
                     except Exception:
                         pass
