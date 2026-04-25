@@ -333,10 +333,20 @@ with tab1:
     with c1:
         st.markdown("### Recommendation")
         st.markdown(f"""
-        <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);border-radius:10px'>
-        <h2 style='color:{signal_analysis["color"]};font-size:36px;font-weight:800;margin:0'>{signal_analysis["signal"]}</h2>
-        <p style='font-size:16px;margin:10px 0 0 0'><strong>Confidence: {signal_analysis['confidence']:.0f}%</strong></p>
-        <p style='font-size:12px;opacity:0.5;margin:6px 0 0 0'>Based on technical + {len(st.session_state.selected_news)} news article(s)</p>
+        <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
+                    border-radius:12px;margin-bottom:12px'>
+          <h3 style='margin:0 0 6px 0;font-size:15px;font-weight:400;opacity:0.6'>
+            Technical + News Signal
+          </h3>
+          <h2 style='margin:0;font-size:36px;font-weight:800;color:{signal_analysis["color"]}'>
+            {signal_analysis["signal"]}
+          </h2>
+          <p style='margin:10px 0 0 0;font-size:16px'>
+            <strong>Confidence: {signal_analysis['confidence']:.0f}%</strong>
+          </p>
+          <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
+            Based on technical + {len(st.session_state.selected_news)} news article(s)
+          </p>
         </div>
         """, unsafe_allow_html=True)
     with c2:
@@ -433,10 +443,11 @@ with tab2:
     # ── News-only signal ─────────────────────────────────────────────────
     news_signal_analysis = calculate_professional_signal(technical, selected)
 
-    # Signal display
-    sig_col, detail_col = st.columns([1, 2])
+    # Signal display — identical layout to Analysis tab
+    sig_col, detail_col = st.columns([1.2, 2])
     with sig_col:
         sig = news_signal_analysis
+        st.markdown("### Recommendation")
         st.markdown(f"""
         <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
                     border-radius:12px;margin-bottom:12px'>
@@ -482,7 +493,7 @@ with tab2:
             st.info("Select articles ↓ to generate news signal")
 
     with detail_col:
-        st.markdown("**Signal breakdown:**")
+        st.markdown("### Signal Confirmations")
         for conf in sig["confirmations"]:
             st.markdown(f"- {conf}")
 
