@@ -333,10 +333,10 @@ with tab1:
     with c1:
         st.markdown("### Recommendation")
         st.markdown(f"""
-        <div style='text-align:center;padding:20px;background:rgba(255,255,255,0.07);border-radius:10px'>
-        <h2 style='color:{signal_analysis["color"]}'>{signal_analysis["signal"]}</h2>
-        <p><strong>Confidence: {signal_analysis['confidence']:.0f}%</strong></p>
-        <p style='font-size:12px;opacity:0.7'>Based on technical + {len(st.session_state.selected_news)} news article(s)</p>
+        <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);border-radius:10px'>
+        <h2 style='color:{signal_analysis["color"]};font-size:36px;font-weight:800;margin:0'>{signal_analysis["signal"]}</h2>
+        <p style='font-size:16px;margin:10px 0 0 0'><strong>Confidence: {signal_analysis['confidence']:.0f}%</strong></p>
+        <p style='font-size:12px;opacity:0.5;margin:6px 0 0 0'>Based on technical + {len(st.session_state.selected_news)} news article(s)</p>
         </div>
         """, unsafe_allow_html=True)
     with c2:
@@ -438,20 +438,20 @@ with tab2:
     with sig_col:
         sig = news_signal_analysis
         st.markdown(f"""
-        <div style='text-align:center;padding:20px;background:rgba(255,255,255,0.07);
-                    border-radius:12px;margin-bottom:10px'>
-          <div style='font-size:13px;opacity:0.6;margin-bottom:6px'>
+        <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
+                    border-radius:12px;margin-bottom:12px'>
+          <h3 style='margin:0 0 6px 0;font-size:15px;font-weight:400;opacity:0.6'>
             News-Adjusted Signal
-          </div>
-          <div style='font-size:28px;font-weight:800;color:{sig["color"]}'>
+          </h3>
+          <h2 style='margin:0;font-size:36px;font-weight:800;color:{sig["color"]}'>
             {sig["signal"]}
-          </div>
-          <div style='font-size:13px;margin-top:6px'>
-            Confidence: <strong>{sig["confidence"]:.0f}%</strong>
-          </div>
-          <div style='font-size:11px;opacity:0.5;margin-top:4px'>
+          </h2>
+          <p style='margin:10px 0 0 0;font-size:16px'>
+            <strong>Confidence: {sig["confidence"]:.0f}%</strong>
+          </p>
+          <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
             {len(selected)} article(s) factored in
-          </div>
+          </p>
         </div>
         """, unsafe_allow_html=True)
 
