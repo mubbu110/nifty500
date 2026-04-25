@@ -462,20 +462,55 @@ with tab2:
 
 with tab3:
     st.markdown("### 📊 Fundamentals")
+    st.caption("All values calculated from raw financial statements — no pre-computed ratios.")
+
+    def _fmt(val, fmt):
+        try:
+            return fmt.format(float(val))
+        except Exception:
+            return "N/A"
+
+    def _fmt_large(val):
+        try:
+            v = float(val)
+            if v >= 1e12: return f"₹{v/1e12:.2f}T"
+            if v >= 1e9:  return f"₹{v/1e9:.2f}B"
+            if v >= 1e7:  return f"₹{v/1e7:.2f}Cr"
+            return f"₹{v:,.0f}"
+        except Exception:
+            return "N/A"
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("P/E Ratio",   f"{fundamentals['pe_ratio']:.2f}"          if fundamentals['pe_ratio']       != "N/A" else "N/A")
-        st.metric("Market Cap",  f"₹{fundamentals['market_cap']/1e12:.2f}T" if fundamentals['market_cap']     != "N/A" else "N/A")
-        st.metric("EPS",         f"₹{fundamentals['eps']:.2f}"              if fundamentals['eps']            != "N/A" else "N/A")
+        st.metric("P/E Ratio",
+                  _fmt(fundamentals['pe_ratio'], "{:.2f}"),
+                  help="Formula: Current Price ÷ EPS (TTM)\nEPS = Net Income (TTM) ÷ Shares Outstanding")
+        st.metric("Market Cap",
+                  _fmt_large(fundamentals['market_cap']),
+                  help="Formula: Current Market Price × Shares Outstanding")
+        st.metric("EPS (TTM)",
+                  _fmt(fundamentals['eps'], "₹{:.2f}"),
+                  help="Formula: Net Income (last 4 quarters) ÷ Shares Outstanding")
     with c2:
         st.metric("Dividend Yield",
                   f"{fundamentals['dividend_yield']:.2f}%" if fundamentals['dividend_yield'] != "N/A" else "N/A",
-                  help="Annual dividends paid (last 1Y) ÷ current price × 100")
-        st.metric("Debt/Equity",    f"{fundamentals['debt_to_equity']:.2f}"      if fundamentals['debt_to_equity'] != "N/A" else "N/A")
-        st.metric("Profit Margin",  f"{fundamentals['profit_margin']*100:.2f}%"  if fundamentals['profit_margin']  != "N/A" else "N/A")
+                  help="Formula: Total dividends paid in last 1 year ÷ Current Price × 100")
+        st.metric("Debt / Equity",
+                  _fmt(fundamentals['debt_to_equity'], "{:.2f}"),
+                  help="Formula: (Short-term Debt + Long-term Debt) ÷ Stockholders Equity × 100\nSource: Latest quarterly balance sheet")
+        st.metric("Profit Margin",
+                  _fmt(fundamentals['profit_margin'], "{:.2f}%"),
+                  help="Formula: Net Income (TTM) ÷ Revenue (TTM) × 100")
     with c3:
-        st.metric("52W High", f"₹{fundamentals['52_week_high']:.2f}" if fundamentals['52_week_high'] != "N/A" else "N/A")
-        st.metric("52W Low",  f"₹{fundamentals['52_week_low']:.2f}"  if fundamentals['52_week_low']  != "N/A" else "N/A")
+        st.metric("52W High",
+                  _fmt(fundamentals['52_week_high'], "₹{:.2f}"),
+                  help="Formula: max(Daily High price) over last 252 trading days")
+        st.metric("52W Low",
+                  _fmt(fundamentals['52_week_low'], "₹{:.2f}"),
+                  help="Formula: min(Daily Low price) over last 252 trading days")
+        st.metric("Revenue (TTM)",
+                  _fmt_large(fundamentals['revenue']),
+                  help="Formula: Sum of Total Revenue over last 4 quarters (income statement)")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 4 — BACKTESTING
