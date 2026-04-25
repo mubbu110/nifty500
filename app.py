@@ -176,7 +176,9 @@ def fetch_news(symbol: str) -> list:
 # ============================================================================
 
 stocks, live_data = load_nifty500()
+# Build label list — "Reliance Industries Ltd. (RELIANCE)"
 stocks["Label"] = stocks["Company Name"] + " (" + stocks["Symbol"] + ")"
+all_labels = stocks["Label"].tolist()
 
 top_l, top_m, top_r = st.columns([2, 6, 1])
 
@@ -184,42 +186,37 @@ with top_l:
     st.markdown("### 📊 Nifty 500 Professional")
 
 with top_m:
-    # Single smart search input — type symbol or company name
-    search_val = st.text_input(
+    # Single selectbox — Streamlit's built-in search works exactly like the index dropdown
+    current_label = None
+    if st.session_state.symbol:
+        # Pre-select current stock so the box shows it after rerun
+        matches = stocks[stocks["Symbol"] == st.session_state.symbol]["Label"]
+        current_label = matches.values[0] if not matches.empty else None
+
+    chosen = st.selectbox(
         "🔍 Search stock",
+        options=[""] + all_labels,          # blank first = "no selection" state
+        index=0 if current_label is None else ([""] + all_labels).index(current_label),
         placeholder="Type symbol or company name (e.g. INFY, Reliance, TCS…)",
         label_visibility="collapsed",
-        key="smart_search",
+        key="stock_select_main",
     )
-    if search_val.strip():
-        q = search_val.strip().upper()
-        filtered = stocks[
-            stocks["Symbol"].str.contains(q, regex=False) |
-            stocks["Company Name"].str.upper().str.contains(q, regex=False)
-        ]
-    else:
-        filtered = pd.DataFrame()   # empty until user types
 
-    if not filtered.empty:
-        chosen = st.selectbox(
-            "Select", filtered["Label"],
-            label_visibility="collapsed",
-            key="stock_dd",
-        )
-        new_symbol   = filtered[filtered["Label"] == chosen]["Symbol"].values[0]
-        new_company  = filtered[filtered["Label"] == chosen]["Company Name"].values[0]
-        new_industry = filtered[filtered["Label"] == chosen]["Industry"].values[0] \
-                       if "Industry" in filtered.columns else "Unknown"
+    if chosen and chosen != "":
+        row = stocks[stocks["Label"] == chosen]
+        if not row.empty:
+            new_symbol   = row["Symbol"].values[0]
+            new_company  = row["Company Name"].values[0]
+            new_industry = row["Industry"].values[0] if "Industry" in row.columns else "Unknown"
 
-        # Only update + rerun when stock actually changes
-        if new_symbol != st.session_state.symbol:
-            st.session_state.symbol       = new_symbol
-            st.session_state.company_name = new_company
-            st.session_state.industry     = new_industry
-            st.session_state.selected_news = []
-            st.session_state.news_items    = []
-            st.session_state.news_fetched_for = None
-            st.rerun()
+            if new_symbol != st.session_state.symbol:
+                st.session_state.symbol            = new_symbol
+                st.session_state.company_name      = new_company
+                st.session_state.industry          = new_industry
+                st.session_state.selected_news     = []
+                st.session_state.news_items        = []
+                st.session_state.news_fetched_for  = None
+                st.rerun()
 
 with top_r:
     st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
