@@ -61,24 +61,196 @@ for key, default in [
 
 def apply_theme():
     theme = THEMES[st.session_state.theme]
+    is_dark = st.session_state.theme == "dark"
+
+    # Dynamic colours based on mode
+    text_primary    = theme["text_primary"]
+    text_secondary  = theme["text_secondary"]
+    bg_primary      = theme["bg_primary"]
+    bg_card         = theme["bg_card"]
+    bg_secondary    = theme["bg_secondary"]
+    accent          = theme["accent"]
+    border          = theme["border_color"]
+
+    # Signal box background — visible in both modes
+    signal_bg       = "rgba(0,0,0,0.12)"  if is_dark else "rgba(0,0,0,0.06)"
+    signal_border   = "rgba(255,255,255,0.08)" if is_dark else "rgba(0,0,0,0.10)"
+
+    # Caption / subtitle text
+    caption_color   = "rgba(255,255,255,0.45)" if is_dark else "rgba(0,0,0,0.45)"
+
+    # Metric card
+    metric_bg       = bg_card
+    metric_border   = border
+
+    # Chart plot background
+    plot_bg         = "rgba(15,22,41,0.8)" if is_dark else "rgba(245,247,252,0.8)"
+
     st.markdown(f"""
     <style>
-    /* Hide Streamlit default sidebar toggle & hamburger */
-    [data-testid="collapsedControl"] {{display: none}}
-    section[data-testid="stSidebar"] {{display: none}}
-    .stApp {{background-color: {theme['bg_primary']}; color: {theme['text_primary']}}}
-    .stMetric {{background-color: {theme['bg_card']}; border-radius:10px; padding:15px}}
-    /* Tab bar styling */
-    .stTabs [data-baseweb="tab-list"] {{gap: 4px}}
+    /* ── Sidebar hide ── */
+    [data-testid="collapsedControl"] {{display:none}}
+    section[data-testid="stSidebar"]  {{display:none}}
+
+    /* ── App base ── */
+    .stApp {{
+        background-color: {bg_primary} !important;
+        color: {text_primary} !important;
+    }}
+
+    /* ── All text elements ── */
+    .stApp p, .stApp li, .stApp span,
+    .stApp label, .stApp div {{
+        color: {text_primary};
+    }}
+    .stApp h1, .stApp h2, .stApp h3,
+    .stApp h4, .stApp h5, .stApp h6 {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Markdown text ── */
+    .stMarkdown p, .stMarkdown li {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Caption / small text ── */
+    .stCaption, .stCaption p {{
+        color: {text_secondary} !important;
+        opacity: 0.8;
+    }}
+
+    /* ── Metrics ── */
+    [data-testid="stMetric"] {{
+        background-color: {metric_bg};
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid {metric_border};
+    }}
+    [data-testid="stMetricLabel"] p {{
+        color: {text_secondary} !important;
+        font-size: 13px !important;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {text_primary} !important;
+        font-size: 24px !important;
+        font-weight: 700 !important;
+    }}
+
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 4px;
+        background: {bg_secondary};
+        border-radius: 10px 10px 0 0;
+        padding: 4px 4px 0 4px;
+    }}
     .stTabs [data-baseweb="tab"] {{
         padding: 8px 20px;
         border-radius: 8px 8px 0 0;
         font-weight: 600;
+        color: {text_secondary} !important;
+    }}
+    .stTabs [aria-selected="true"] {{
+        color: {accent} !important;
+        background: {bg_primary} !important;
+    }}
+
+    /* ── Selectbox / inputs ── */
+    .stSelectbox div[data-baseweb="select"] {{
+        background-color: {bg_secondary} !important;
+        border-color: {border} !important;
+    }}
+    .stSelectbox div[data-baseweb="select"] span {{
+        color: {text_primary} !important;
+    }}
+    .stTextInput input {{
+        background-color: {bg_secondary} !important;
+        color: {text_primary} !important;
+        border-color: {border} !important;
+    }}
+
+    /* ── Checkboxes ── */
+    .stCheckbox label span {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Radio buttons ── */
+    .stRadio label span {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Multiselect ── */
+    .stMultiSelect div[data-baseweb="select"] {{
+        background-color: {bg_secondary} !important;
+    }}
+    .stMultiSelect span {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Info / warning / error boxes ── */
+    .stAlert {{
+        background-color: {bg_secondary} !important;
+        color: {text_primary} !important;
+        border-radius: 8px;
+    }}
+
+    /* ── Dataframe ── */
+    .stDataFrame {{
+        border: 1px solid {border};
+        border-radius: 8px;
+    }}
+
+    /* ── Progress bar ── */
+    .stProgress > div > div {{
+        background-color: {accent} !important;
+    }}
+
+    /* ── Signal / card boxes (HTML) ── */
+    .signal-box {{
+        background: {signal_bg} !important;
+        border: 1px solid {signal_border} !important;
+        border-radius: 12px;
+    }}
+
+    /* ── Caption override for HTML spans ── */
+    span.caption {{
+        color: {caption_color} !important;
+    }}
+
+    /* ── Divider ── */
+    hr {{
+        border-color: {border} !important;
+        opacity: 0.5;
+    }}
+
+    /* ── Buttons ── */
+    .stButton button {{
+        background-color: {bg_secondary} !important;
+        color: {text_primary} !important;
+        border: 1px solid {border} !important;
+        border-radius: 8px !important;
+    }}
+    .stButton button:hover {{
+        border-color: {accent} !important;
+        color: {accent} !important;
     }}
     </style>
     """, unsafe_allow_html=True)
 
+    # Store for use in HTML blocks
+    st.session_state["_text_primary"]   = text_primary
+    st.session_state["_text_secondary"] = text_secondary
+    st.session_state["_caption_color"]  = caption_color
+    st.session_state["_signal_bg"]      = signal_bg
+    st.session_state["_signal_border"]  = signal_border
+
 apply_theme()
+
+# Shorthand helpers used in HTML markdown blocks
+_tp  = st.session_state.get("_text_primary",   "#f0f4ff")
+_ts  = st.session_state.get("_text_secondary",  "#c7d2fe")
+_cap = st.session_state.get("_caption_color",   "rgba(255,255,255,0.45)")
+_sbg = st.session_state.get("_signal_bg",       "rgba(0,0,0,0.12)")
+_sbd = st.session_state.get("_signal_border",   "rgba(255,255,255,0.08)")
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -319,10 +491,13 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(TAB_NAMES)
-
-# tab1 = Analysis, tab2 = News & Sentiment, tab3 = Sector
-# tab4 = Fundamentals, tab5 = Backtesting, tab6 = Risk
+# ── Chart theme vars — used across all tabs ───────────────────────────────────
+is_dark_mode  = st.session_state.theme == "dark"
+chart_template = "plotly_dark"   if is_dark_mode else "plotly_white"
+plot_bg        = "rgba(15,22,41,0.8)"       if is_dark_mode else "rgba(248,250,252,0.9)"
+price_col      = "#e2e8f0"                  if is_dark_mode else "#1e293b"
+grid_col       = "rgba(255,255,255,0.05)"   if is_dark_mode else "rgba(0,0,0,0.07)"
+zero_line      = "rgba(255,255,255,0.15)"   if is_dark_mode else "rgba(0,0,0,0.15)"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 1 — TECHNICAL ANALYSIS
@@ -332,29 +507,26 @@ with tab1:
     c1, c2 = st.columns([1.2, 2])
     with c1:
         st.markdown(f"""
-        <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
-                    border-radius:12px'>
-          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;text-align:left'>
-            Recommendation
-          </p>
-          <p style='margin:0 0 16px 0;font-size:13px;opacity:0.5;text-align:left'>
-            Technical + News Signal
-          </p>
-          <h2 style='margin:0;font-size:36px;font-weight:800;color:{signal_analysis["color"]}'>
-            {signal_analysis["signal"]}
-          </h2>
-          <p style='margin:14px 0 0 0;font-size:16px'>
-            <strong>Confidence: {signal_analysis['confidence']:.0f}%</strong>
-          </p>
-          <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
-            Based on technical + {len(st.session_state.selected_news)} news article(s)
-          </p>
+        <div style='text-align:center;padding:30px 20px;background:{_sbg};
+                    border:1px solid {_sbd};border-radius:12px'>
+          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;
+                    text-align:left;color:{_tp}'>Recommendation</p>
+          <p style='margin:0 0 16px 0;font-size:13px;text-align:left;color:{_cap}'>
+            Technical + News Signal</p>
+          <h2 style='margin:0;font-size:36px;font-weight:800;
+                     color:{signal_analysis["color"]}'>{signal_analysis["signal"]}</h2>
+          <p style='margin:14px 0 0 0;font-size:16px;color:{_tp}'>
+            <strong>Confidence: {signal_analysis['confidence']:.0f}%</strong></p>
+          <p style='margin:6px 0 0 0;font-size:12px;color:{_cap}'>
+            Based on technical + {len(st.session_state.selected_news)} news article(s)</p>
         </div>
         """, unsafe_allow_html=True)
     with c2:
         st.markdown(f"""
-        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700'>Signal Confirmations</p>
-        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px'>{conf}</p>" for conf in signal_analysis["confirmations"])}
+        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700;color:{_tp}'>
+          Signal Confirmations</p>
+        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px;color:{_tp}'>{conf}</p>"
+                 for conf in signal_analysis["confirmations"])}
         """, unsafe_allow_html=True)
 
     st.markdown("---")
@@ -394,38 +566,38 @@ with tab1:
             line=dict(color='rgba(192,132,252,0.55)', width=1, dash='dot'),
             showlegend=False), row=1, col=1)
     fig.add_trace(go.Scatter(x=close_s.index, y=close_s, name='Price',
-        line=dict(color='#e2e8f0', width=2)), row=1, col=1)
+        line=dict(color=price_col, width=2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=ma50_s.index, y=ma50_s, name='MA50',
-        line=dict(color='#fbbf24', width=1.5, dash='dash')), row=1, col=1)
+        line=dict(color='#f59e0b', width=1.5, dash='dash')), row=1, col=1)
     fig.add_trace(go.Scatter(x=ma200_s.index, y=ma200_s, name='MA200',
-        line=dict(color='#f87171', width=1.5, dash='dash')), row=1, col=1)
+        line=dict(color='#ef4444', width=1.5, dash='dash')), row=1, col=1)
     if macd_s is not None and msig_s is not None:
         hist = macd_s - msig_s
         fig.add_trace(go.Bar(x=hist.index, y=hist, name='MACD Hist',
             marker_color=['#34d399' if v >= 0 else '#f87171' for v in hist],
             showlegend=False), row=2, col=1)
         fig.add_trace(go.Scatter(x=macd_s.index, y=macd_s, name='MACD',
-            line=dict(color='#60a5fa', width=1.5)), row=2, col=1)
+            line=dict(color='#3b82f6', width=1.5)), row=2, col=1)
         fig.add_trace(go.Scatter(x=msig_s.index, y=msig_s, name='Signal',
-            line=dict(color='#fb923c', width=1.5)), row=2, col=1)
-        fig.add_hline(y=0, line_color='rgba(255,255,255,0.15)', line_width=1, row=2, col=1)
+            line=dict(color='#f97316', width=1.5)), row=2, col=1)
+        fig.add_hline(y=0, line_color=zero_line, line_width=1, row=2, col=1)
     fig.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s, name='RSI(14)',
-        line=dict(color='#34d399', width=1.5)), row=3, col=1)
-    fig.add_hrect(y0=70, y1=100, fillcolor='rgba(248,113,113,0.08)', line_width=0, row=3, col=1)
-    fig.add_hrect(y0=0,  y1=30,  fillcolor='rgba(52,211,153,0.08)',  line_width=0, row=3, col=1)
-    fig.add_hline(y=70, line_dash="dash", line_color="rgba(248,113,113,0.5)", line_width=1, row=3, col=1)
-    fig.add_hline(y=30, line_dash="dash", line_color="rgba(52,211,153,0.5)",  line_width=1, row=3, col=1)
+        line=dict(color='#10b981', width=1.5)), row=3, col=1)
+    fig.add_hrect(y0=70, y1=100, fillcolor='rgba(239,68,68,0.08)',  line_width=0, row=3, col=1)
+    fig.add_hrect(y0=0,  y1=30,  fillcolor='rgba(16,185,129,0.08)', line_width=0, row=3, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="rgba(239,68,68,0.5)",   line_width=1, row=3, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="rgba(16,185,129,0.5)",  line_width=1, row=3, col=1)
     fig.update_yaxes(range=[0, 100], row=3, col=1)
-    vol_colors = ['#34d399' if i == 0 or close_s.iloc[i] >= close_s.iloc[i-1]
-                  else '#f87171' for i in range(len(close_s))]
+    vol_colors = ['#10b981' if i == 0 or close_s.iloc[i] >= close_s.iloc[i-1]
+                  else '#ef4444' for i in range(len(close_s))]
     fig.add_trace(go.Bar(x=vol_s.index, y=vol_s, name='Volume',
         marker_color=vol_colors, showlegend=False), row=4, col=1)
-    fig.update_layout(height=950, hovermode='x unified', template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
+    fig.update_layout(height=950, hovermode='x unified', template=chart_template,
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
         margin=dict(l=10, r=10, t=60, b=10))
     fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)')
+    fig.update_yaxes(showgrid=True, gridcolor=grid_col)
     st.plotly_chart(fig, use_container_width=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -450,30 +622,27 @@ with tab2:
     with sig_col:
         sig = news_signal_analysis
         st.markdown(f"""
-        <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
-                    border-radius:12px'>
-          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;text-align:left'>
-            Recommendation
-          </p>
-          <p style='margin:0 0 16px 0;font-size:13px;opacity:0.5;text-align:left'>
-            Technical + News Signal
-          </p>
-          <h2 style='margin:0;font-size:36px;font-weight:800;color:{sig["color"]}'>
-            {sig["signal"]}
-          </h2>
-          <p style='margin:14px 0 0 0;font-size:16px'>
-            <strong>Confidence: {sig["confidence"]:.0f}%</strong>
-          </p>
-          <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
-            Based on technical + {len(selected)} news article(s)
-          </p>
+        <div style='text-align:center;padding:30px 20px;background:{_sbg};
+                    border:1px solid {_sbd};border-radius:12px'>
+          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;
+                    text-align:left;color:{_tp}'>Recommendation</p>
+          <p style='margin:0 0 16px 0;font-size:13px;text-align:left;
+                    color:{_cap}'>Technical + News Signal</p>
+          <h2 style='margin:0;font-size:36px;font-weight:800;
+                     color:{sig["color"]}'>{sig["signal"]}</h2>
+          <p style='margin:14px 0 0 0;font-size:16px;color:{_tp}'>
+            <strong>Confidence: {sig["confidence"]:.0f}%</strong></p>
+          <p style='margin:6px 0 0 0;font-size:12px;color:{_cap}'>
+            Based on technical + {len(selected)} news article(s)</p>
         </div>
         """, unsafe_allow_html=True)
 
     with detail_col:
         st.markdown(f"""
-        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700'>Signal Confirmations</p>
-        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px'>{conf}</p>" for conf in sig["confirmations"])}
+        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700;
+                  color:{_tp}'>Signal Confirmations</p>
+        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px;color:{_tp}'>{conf}</p>"
+                 for conf in sig["confirmations"])}
         """, unsafe_allow_html=True)
 
     st.markdown("---")
@@ -514,8 +683,8 @@ with tab2:
                 pub = item.get("published", "")[:16]
                 st.markdown(
                     f"<span style='color:{badge_color};font-size:13px'>{badge}</span>"
-                    f" &nbsp; [{escape(item['title'])}]({item['link']})"
-                    f" <span style='opacity:0.4;font-size:11px'>{pub}</span>",
+                    f" &nbsp; <a href='{item['link']}' style='color:{_tp}'>{escape(item['title'])}</a>"
+                    f" <span style='color:{_cap};font-size:11px'>{pub}</span>",
                     unsafe_allow_html=True,
                 )
             if checked:
@@ -811,10 +980,10 @@ with tab3:
                     except Exception:
                         pass
 
-            fig_n.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.25)")
+            fig_n.add_hline(y=100, line_dash="dot", line_color="rgba(128,128,128,0.4)")
             fig_n.update_layout(
-                height=460, template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
+                height=460, template=chart_template,
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
                 hovermode='x unified', yaxis_title="Rebased to 100",
                 legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
                 margin=dict(l=10, r=10, t=50, b=10),
@@ -837,8 +1006,8 @@ with tab3:
             fig_b = go.Figure(go.Bar(x=bar_vals.index, y=bar_vals,
                 marker_color=['#34d399' if v>=0 else '#f87171' for v in bar_vals],
                 text=[f"{v:+.1f}%" for v in bar_vals], textposition='outside'))
-            fig_b.update_layout(height=350, template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15,22,41,0.8)',
+            fig_b.update_layout(height=350, template=chart_template,
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
                 yaxis_title=f"{period_col} (%)", margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(fig_b, use_container_width=True)
 
