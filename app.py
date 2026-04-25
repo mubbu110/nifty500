@@ -309,126 +309,91 @@ def score_headline(text: str) -> float:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_news(symbol: str) -> list:
     """
-    Fetch news from multiple sources with fallbacks:
-    1. yfinance .news (most reliable on Streamlit Cloud)
-    2. Economic Times RSS
-    3. Moneycontrol RSS
-    4. Yahoo Finance RSS
-    5. Google News RSS
+    Fetch news using Anthropic API with web_search tool.
+    This works on Streamlit Cloud since api.anthropic.com is an allowed domain.
+    Falls back to yfinance .news if API call fails.
     """
+    import json as _json
+
     news = []
 
-    # ── Source 1: yfinance built-in news (no HTTP block issues) ──────────
+    # ── Method 1: Anthropic API with web_search ───────────────────────────
     try:
-        ticker = yf.Ticker(f"{symbol}.NS")
-        yf_news = ticker.news or []
-        for item in yf_news[:15]:
-            # newer yfinance returns nested content dict
-            content = item.get("content", item)
-            title = (content.get("title") or item.get("title", "")).strip()
-            link  = (content.get("canonicalUrl", {}).get("url")
-                     or content.get("clickThroughUrl", {}).get("url")
-                     or item.get("link", "#"))
-            pub   = content.get("pubDate") or item.get("providerPublishTime", "")
-            if title:
-                news.append({
-                    "title": title,
-                    "link": link,
-                    "published": str(pub)[:16],
-                    "sentiment": score_headline(title),
-                    "source": "Yahoo Finance",
-                })
-    except Exception:
-        pass
+        import requests as _req
 
-    if len(news) >= 5:
-        return news[:15]
-
-    # ── Source 2: Economic Times RSS ─────────────────────────────────────
-    try:
-        company_query = symbol.replace("-", "+")
-        et_url = f"https://economictimes.indiatimes.com/rssfeedstopstories.cms"
-        feed = feedparser.parse(et_url)
-        for entry in feed.entries[:20]:
-            title = entry.get("title", "").strip()
-            if not title:
-                continue
-            # Filter to relevant articles
-            if symbol.lower() in title.lower() or symbol[:4].lower() in title.lower():
-                news.append({
-                    "title": title,
-                    "link": entry.get("link", "#"),
-                    "published": entry.get("published", "")[:16],
-                    "sentiment": score_headline(title),
-                    "source": "Economic Times",
-                })
-    except Exception:
-        pass
-
-    if len(news) >= 5:
-        return news[:15]
-
-    # ── Source 3: Google News RSS for Indian market ───────────────────────
-    try:
-        # Get company name from yfinance for better search
-        try:
-            info = yf.Ticker(f"{symbol}.NS").fast_info
-            company = symbol
-        except Exception:
-            company = symbol
-
-        g_url = (
-            f"https://news.google.com/rss/search?"
-            f"q={company}+NSE+stock&hl=en-IN&gl=IN&ceid=IN:en"
+        prompt = (
+            f"Search for the latest 10 news headlines about {symbol} NSE India stock. "
+            f"Return ONLY a JSON array, no markdown, no explanation. "
+            f"Each item must have: title (string), url (string), published (string, date only). "
+            f"Example: [{{'title':'...','url':'...','published':'2026-04-25'}}]"
         )
-        feed = feedparser.parse(g_url)
-        for entry in feed.entries[:15]:
-            title = entry.get("title", "").strip()
-            if not title:
-                continue
-            news.append({
-                "title": title,
-                "link": entry.get("link", "#"),
-                "published": entry.get("published", "")[:16],
-                "sentiment": score_headline(title),
-                "source": "Google News",
-            })
+
+        response = _req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=20,
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            # Extract text from response
+            full_text = " ".join(
+                block.get("text", "")
+                for block in data.get("content", [])
+                if block.get("type") == "text"
+            )
+            # Parse JSON array from response
+            start = full_text.find("[")
+            end   = full_text.rfind("]") + 1
+            if start != -1 and end > start:
+                items = _json.loads(full_text[start:end])
+                for item in items[:15]:
+                    title = str(item.get("title", "")).strip()
+                    if title:
+                        news.append({
+                            "title": title,
+                            "link": item.get("url", "#"),
+                            "published": str(item.get("published", ""))[:16],
+                            "sentiment": score_headline(title),
+                            "source": "Web Search",
+                        })
     except Exception:
         pass
 
     if len(news) >= 3:
         return news[:15]
 
-    # ── Source 4: Yahoo Finance RSS ───────────────────────────────────────
+    # ── Method 2: yfinance .news (backup) ────────────────────────────────
     try:
-        for suffix in [f"{symbol}.NS", symbol]:
-            url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={suffix}&region=IN&lang=en-IN"
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:15]:
-                title = entry.get("title", "").strip()
-                if title:
-                    news.append({
-                        "title": title,
-                        "link": entry.get("link", "#"),
-                        "published": entry.get("published", "")[:16],
-                        "sentiment": score_headline(title),
-                        "source": "Yahoo Finance",
-                    })
-            if news:
-                break
+        ticker = yf.Ticker(f"{symbol}.NS")
+        yf_news = ticker.news or []
+        for item in yf_news[:15]:
+            content = item.get("content", item)
+            title = (content.get("title") or item.get("title", "")).strip()
+            link  = (
+                content.get("canonicalUrl", {}).get("url")
+                or content.get("clickThroughUrl", {}).get("url")
+                or item.get("link", "#")
+            )
+            pub = str(content.get("pubDate") or item.get("providerPublishTime", ""))[:16]
+            if title:
+                news.append({
+                    "title": title,
+                    "link": link,
+                    "published": pub,
+                    "sentiment": score_headline(title),
+                    "source": "Yahoo Finance",
+                })
     except Exception:
         pass
 
-    # Deduplicate by title
-    seen = set()
-    unique = []
-    for item in news:
-        key = item["title"][:60]
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-
-    return unique[:15]
+    return news[:15]
 
 # ============================================================================
 # TOP BAR — logo + stock search + theme toggle (NO sidebar)
