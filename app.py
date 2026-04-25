@@ -331,17 +331,19 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(TAB_NAMES)
 with tab1:
     c1, c2 = st.columns([1.2, 2])
     with c1:
-        st.markdown("### Recommendation")
         st.markdown(f"""
         <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
-                    border-radius:12px;margin-bottom:12px'>
-          <h3 style='margin:0 0 6px 0;font-size:15px;font-weight:400;opacity:0.6'>
+                    border-radius:12px'>
+          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;text-align:left'>
+            Recommendation
+          </p>
+          <p style='margin:0 0 16px 0;font-size:13px;opacity:0.5;text-align:left'>
             Technical + News Signal
-          </h3>
+          </p>
           <h2 style='margin:0;font-size:36px;font-weight:800;color:{signal_analysis["color"]}'>
             {signal_analysis["signal"]}
           </h2>
-          <p style='margin:10px 0 0 0;font-size:16px'>
+          <p style='margin:14px 0 0 0;font-size:16px'>
             <strong>Confidence: {signal_analysis['confidence']:.0f}%</strong>
           </p>
           <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
@@ -350,9 +352,10 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
     with c2:
-        st.markdown("### Signal Confirmations")
-        for conf in signal_analysis["confirmations"]:
-            st.markdown(f"- {conf}")
+        st.markdown(f"""
+        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700'>Signal Confirmations</p>
+        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px'>{conf}</p>" for conf in signal_analysis["confirmations"])}
+        """, unsafe_allow_html=True)
 
     st.markdown("---")
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -446,17 +449,19 @@ with tab2:
     sig_col, detail_col = st.columns([1.2, 2])
     with sig_col:
         sig = news_signal_analysis
-        st.markdown("### Recommendation")
         st.markdown(f"""
         <div style='text-align:center;padding:30px 20px;background:rgba(255,255,255,0.07);
-                    border-radius:12px;margin-bottom:12px'>
-          <h3 style='margin:0 0 6px 0;font-size:15px;font-weight:400;opacity:0.6'>
+                    border-radius:12px'>
+          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;text-align:left'>
+            Recommendation
+          </p>
+          <p style='margin:0 0 16px 0;font-size:13px;opacity:0.5;text-align:left'>
             Technical + News Signal
-          </h3>
+          </p>
           <h2 style='margin:0;font-size:36px;font-weight:800;color:{sig["color"]}'>
             {sig["signal"]}
           </h2>
-          <p style='margin:10px 0 0 0;font-size:16px'>
+          <p style='margin:14px 0 0 0;font-size:16px'>
             <strong>Confidence: {sig["confidence"]:.0f}%</strong>
           </p>
           <p style='margin:6px 0 0 0;font-size:12px;opacity:0.5'>
@@ -466,9 +471,10 @@ with tab2:
         """, unsafe_allow_html=True)
 
     with detail_col:
-        st.markdown("### Signal Confirmations")
-        for conf in sig["confirmations"]:
-            st.markdown(f"- {conf}")
+        st.markdown(f"""
+        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700'>Signal Confirmations</p>
+        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px'>{conf}</p>" for conf in sig["confirmations"])}
+        """, unsafe_allow_html=True)
 
     st.markdown("---")
 
