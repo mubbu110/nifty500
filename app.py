@@ -599,9 +599,9 @@ with tab1:
 
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True,
-        row_heights=[0.44, 0.20, 0.18, 0.18],
-        vertical_spacing=0.03,
-        subplot_titles=("Price + MA50/200 + Bollinger Bands", "MACD", "RSI (14)", "Volume"),
+        row_heights=[0.46, 0.20, 0.17, 0.17],
+        vertical_spacing=0.06,   # increased from 0.03 to give titles room
+        subplot_titles=(" ", "MACD", "RSI (14)", "Volume"),  # Row 1 title handled via annotation
     )
     if bb_upper is not None:
         fig.add_trace(go.Scatter(x=bb_upper.index, y=bb_upper, name='BB Upper',
@@ -639,12 +639,44 @@ with tab1:
                   else '#ef4444' for i in range(len(close_s))]
     fig.add_trace(go.Bar(x=vol_s.index, y=vol_s, name='Volume',
         marker_color=vol_colors, showlegend=False), row=4, col=1)
-    fig.update_layout(height=950, hovermode='x unified', template=chart_template,
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
-        margin=dict(l=10, r=10, t=60, b=10))
+    fig.update_layout(
+        height=1020,
+        hovermode='x unified',
+        template=chart_template,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=plot_bg,
+        # Legend goes BELOW the chart to avoid overlapping subplot titles
+        legend=dict(
+            orientation="h",
+            yanchor="top", y=-0.04,
+            xanchor="left", x=0,
+            font=dict(size=12),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        margin=dict(l=10, r=10, t=80, b=80),
+        # Style the subplot title annotations
+        annotations=[
+            dict(
+                text="Price + MA50/200 + Bollinger Bands",
+                x=0.5, xref="paper",
+                y=1.0, yref="paper",
+                xanchor="center", yanchor="bottom",
+                showarrow=False,
+                font=dict(size=13, color="#94a3b8"),
+            ),
+        ] + [
+            # Keep existing subplot titles but push them down slightly
+            ann for ann in fig.layout.annotations
+            if ann.text in ("MACD", "RSI (14)", "Volume")
+        ],
+    )
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(showgrid=True, gridcolor=grid_col)
+
+    # Style all subplot titles to be smaller and muted
+    for ann in fig.layout.annotations:
+        ann.font = dict(size=12, color="#94a3b8")
+
     st.plotly_chart(fig, use_container_width=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
