@@ -126,13 +126,23 @@ def calculate_wma(series, period):
 @st.cache_data(ttl=CACHE_FUNDAMENTALS_TTL)
 def fetch_fundamentals(symbol):
     """
-    Fetch fundamentals using fast_info first (most reliable for Indian tickers),
-    then ticker.info as backup, then derive everything possible from price history.
+    ALL metrics calculated from raw data — no pre-computed ratios fetched.
 
-    Priority order:
-      1. fast_info  — market_cap, 52W high/low, shares outstanding, last_price
-      2. ticker.info — PE, EPS, dividend, margins, debt/equity
-      3. price history — 52W high/low always available, derive PE from EPS
+    Formulas:
+      52W High/Low     = max(High) / min(Low) over last 252 trading days of OHLC history
+      Current Price    = latest Close from price history
+      Shares Outs.     = fast_info.shares (most reliable source for this one raw input)
+      Market Cap       = Current Price × Shares Outstanding
+      Annual Dividends = sum of all Dividends paid in last 1Y (raw unadjusted history)
+      Dividend Yield   = Annual Dividends ÷ Current Price × 100
+      Revenue (TTM)    = sum of last 4 quarters of Total Revenue (income statement)
+      Net Income (TTM) = sum of last 4 quarters of Net Income (income statement)
+      EPS              = Net Income (TTM) ÷ Shares Outstanding
+      P/E Ratio        = Current Price ÷ EPS
+      Profit Margin    = Net Income (TTM) ÷ Revenue (TTM) × 100
+      Total Debt       = Short-term Debt + Long-term Debt (balance sheet, latest quarter)
+      Equity           = Total Stockholder Equity (balance sheet, latest quarter)
+      Debt/Equity      = Total Debt ÷ Equity × 100
     """
     result = {k: "N/A" for k in [
         "pe_ratio", "market_cap", "eps", "dividend_yield",
@@ -141,114 +151,149 @@ def fetch_fundamentals(symbol):
     ]}
 
     for suffix in [".NS", ".BO"]:
-        ticker_sym = f"{symbol}{suffix}"
         try:
-            ticker = yf.Ticker(ticker_sym)
+            ticker = yf.Ticker(f"{symbol}{suffix}")
 
-            # ── Step 1: fast_info — always works, gives core numbers ───
+            # ── 1. Price history → 52W High/Low + Current Price ──────────
+            try:
+                hist_raw = ticker.history(period="1y", auto_adjust=False)
+                hist_adj = ticker.history(period="1y", auto_adjust=True)
+
+                if hist_raw.empty:
+                    continue
+
+                # Flatten MultiIndex columns if present
+                for h in [hist_raw, hist_adj]:
+                    if isinstance(h.columns, pd.MultiIndex):
+                        h.columns = h.columns.get_level_values(0)
+
+                current_price = float(hist_adj["Close"].iloc[-1])
+                result["52_week_high"] = round(float(hist_raw["High"].max()), 2)
+                result["52_week_low"]  = round(float(hist_raw["Low"].min()),  2)
+            except Exception:
+                current_price = None
+                continue   # can't do anything without price data
+
+            # ── 2. Shares Outstanding → from fast_info (raw input only) ──
+            shares = None
             try:
                 fi = ticker.fast_info
-                attrs = {a: getattr(fi, a, None) for a in dir(fi) if not a.startswith("_")}
-
-                mc = attrs.get("market_cap") or attrs.get("marketCap")
-                if mc and float(mc) > 0:
-                    result["market_cap"] = float(mc)
-
-                yh = attrs.get("year_high") or attrs.get("fiftyTwoWeekHigh")
-                if yh:
-                    result["52_week_high"] = round(float(yh), 2)
-
-                yl = attrs.get("year_low") or attrs.get("fiftyTwoWeekLow")
-                if yl:
-                    result["52_week_low"] = round(float(yl), 2)
-
-                last_price = attrs.get("last_price") or attrs.get("regularMarketPrice")
-                shares = attrs.get("shares") or attrs.get("sharesOutstanding")
-            except Exception:
-                last_price, shares = None, None
-
-            # ── Step 2: ticker.info with strict validation ─────────────
-            try:
-                info = ticker.info or {}
-                # Only trust info if it has real data (not just trailingPegRatio)
-                has_data = any(
-                    info.get(k) not in (None, 0, "")
-                    for k in ["marketCap", "trailingPE", "trailingEps", "totalRevenue"]
-                )
-                if has_data:
-                    def _get(key):
-                        v = info.get(key)
-                        return v if v not in (None, 0, "") else "N/A"
-
-                    if result["pe_ratio"] == "N/A":
-                        result["pe_ratio"] = _get("trailingPE")
-                    if result["market_cap"] == "N/A":
-                        mc2 = _get("marketCap")
-                        if mc2 != "N/A":
-                            result["market_cap"] = float(mc2)
-                    if result["eps"] == "N/A":
-                        result["eps"] = _get("trailingEps")
-                    if result["dividend_yield"] == "N/A":
-                        result["dividend_yield"] = _get("dividendYield")
-                    if result["revenue"] == "N/A":
-                        result["revenue"] = _get("totalRevenue")
-                    if result["profit_margin"] == "N/A":
-                        result["profit_margin"] = _get("profitMargins")
-                    if result["debt_to_equity"] == "N/A":
-                        result["debt_to_equity"] = _get("debtToEquity")
-                    if result["52_week_high"] == "N/A":
-                        result["52_week_high"] = _get("fiftyTwoWeekHigh")
-                    if result["52_week_low"] == "N/A":
-                        result["52_week_low"] = _get("fiftyTwoWeekLow")
+                for attr in ["shares", "shares_outstanding", "sharesOutstanding"]:
+                    val = getattr(fi, attr, None)
+                    if val and float(val) > 0:
+                        shares = float(val)
+                        break
             except Exception:
                 pass
 
-            # ── Step 3: derive from price history (always reliable) ────
+            # ── 3. Market Cap = Price × Shares ───────────────────────────
+            if current_price and shares:
+                result["market_cap"] = current_price * shares
+
+            # ── 4. Dividends → Dividend Yield = ΣDiv(1Y) ÷ Price × 100 ──
             try:
-                hist = ticker.history(period="1y", auto_adjust=True)
-                if not hist.empty:
-                    if result["52_week_high"] == "N/A":
-                        result["52_week_high"] = round(float(hist["High"].max()), 2)
-                    if result["52_week_low"] == "N/A":
-                        result["52_week_low"] = round(float(hist["Low"].min()), 2)
+                if "Dividends" in hist_raw.columns:
+                    annual_div = float(hist_raw["Dividends"].sum())
+                    if current_price and current_price > 0:
+                        result["dividend_yield"] = round(
+                            (annual_div / current_price) * 100, 2
+                        )
+                    else:
+                        result["dividend_yield"] = 0.0
+            except Exception:
+                result["dividend_yield"] = 0.0
 
-                    # Current price from history (most reliable)
-                    current_price = float(hist["Close"].iloc[-1])
+            # ── 5. Income Statement → Revenue, Net Income (TTM) ──────────
+            net_income_ttm = None
+            revenue_ttm    = None
+            try:
+                # quarterly gives last 4 quarters = TTM
+                q_income = ticker.quarterly_income_stmt
+                if q_income is not None and not q_income.empty:
+                    # Take last 4 quarters (columns are dates, most recent first)
+                    last4 = q_income.iloc[:, :4]
 
-                    # Derive market cap from last price × shares if still missing
-                    if result["market_cap"] == "N/A" and shares and last_price:
-                        try:
-                            result["market_cap"] = float(last_price) * float(shares)
-                        except Exception:
-                            pass
+                    def _sum_row(df, *candidates):
+                        for name in candidates:
+                            matches = [r for r in df.index if name.lower() in str(r).lower()]
+                            if matches:
+                                try:
+                                    return float(df.loc[matches[0]].iloc[:4].sum())
+                                except Exception:
+                                    pass
+                        return None
 
-                    # Derive PE from last price ÷ EPS if both available
-                    if result["pe_ratio"] == "N/A" and result["eps"] != "N/A" and current_price:
-                        try:
-                            eps_val = float(result["eps"])
-                            if eps_val > 0:
-                                result["pe_ratio"] = round(current_price / eps_val, 2)
-                        except Exception:
-                            pass
+                    revenue_ttm    = _sum_row(last4,
+                        "Total Revenue", "Revenue", "Net Revenue",
+                        "TotalRevenue")
+                    net_income_ttm = _sum_row(last4,
+                        "Net Income", "Net Income Common Stockholders",
+                        "Net Income Applicable To Common Shares",
+                        "NetIncome", "NetIncomeCommonStockholders")
 
-                    # ── Dividend Yield: sum actual dividends paid in last 1Y ÷ current price ──
-                    # This is always accurate regardless of yfinance info availability
-                    try:
-                        div_hist = ticker.history(period="1y", auto_adjust=False)
-                        if "Dividends" in div_hist.columns:
-                            annual_div = float(div_hist["Dividends"].sum())
-                            if annual_div > 0 and current_price > 0:
-                                result["dividend_yield"] = round((annual_div / current_price) * 100, 2)
-                            elif result["dividend_yield"] == "N/A":
-                                result["dividend_yield"] = 0.0   # no dividends paid
-                    except Exception:
-                        pass
+                    if revenue_ttm and abs(revenue_ttm) > 0:
+                        result["revenue"] = revenue_ttm
 
+                    # Profit Margin = Net Income ÷ Revenue × 100
+                    if net_income_ttm is not None and revenue_ttm and revenue_ttm > 0:
+                        result["profit_margin"] = round(
+                            (net_income_ttm / revenue_ttm) * 100, 2
+                        )
             except Exception:
                 pass
 
-            # Stop trying .BO if we got meaningful data from .NS
-            if any(result[k] != "N/A" for k in ["market_cap", "52_week_high", "52_week_low"]):
+            # ── 6. EPS = Net Income (TTM) ÷ Shares ───────────────────────
+            if net_income_ttm is not None and shares and shares > 0:
+                eps = net_income_ttm / shares
+                result["eps"] = round(eps, 2)
+
+                # ── 7. P/E = Price ÷ EPS ─────────────────────────────────
+                if current_price and eps > 0:
+                    result["pe_ratio"] = round(current_price / eps, 2)
+
+            # ── 8. Balance Sheet → Debt/Equity ───────────────────────────
+            try:
+                q_balance = ticker.quarterly_balance_sheet
+                if q_balance is not None and not q_balance.empty:
+                    latest = q_balance.iloc[:, 0]  # most recent quarter
+
+                    def _get_val(series, *candidates):
+                        for name in candidates:
+                            matches = [r for r in series.index
+                                       if name.lower() in str(r).lower()]
+                            if matches:
+                                try:
+                                    v = float(series[matches[0]])
+                                    if not np.isnan(v):
+                                        return v
+                                except Exception:
+                                    pass
+                        return None
+
+                    short_debt = _get_val(latest,
+                        "Current Debt", "Short Long Term Debt",
+                        "CurrentDebt", "ShortLongTermDebt",
+                        "Short Term Debt", "Current Portion Of Long Term Debt") or 0.0
+
+                    long_debt  = _get_val(latest,
+                        "Long Term Debt", "LongTermDebt",
+                        "Long Term Debt And Capital Lease Obligation") or 0.0
+
+                    equity     = _get_val(latest,
+                        "Stockholders Equity", "Total Stockholder Equity",
+                        "Common Stock Equity", "StockholdersEquity",
+                        "TotalStockholderEquity", "CommonStockEquity")
+
+                    total_debt = short_debt + long_debt
+                    if equity and equity > 0:
+                        result["debt_to_equity"] = round(
+                            (total_debt / equity) * 100, 2
+                        )
+            except Exception:
+                pass
+
+            # Got enough to stop trying .BO suffix
+            if result["52_week_high"] != "N/A":
                 break
 
         except Exception:
