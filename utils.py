@@ -379,7 +379,9 @@ def backtest_signal(symbol, stock_data=None):
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
 
         cumulative_return = (1 + signal_returns).cumprod() - 1
-        max_drawdown = (cumulative_return.cummax() - cumulative_return).max()
+        # Max drawdown = worst peak-to-trough drop — stored as NEGATIVE percentage
+        # Formula: max( peak - current ) gives positive magnitude; negate it
+        max_drawdown = -float((cumulative_return.cummax() - cumulative_return).max()) * 100
 
         sharpe = (
             signal_returns.mean() / signal_returns.std() * np.sqrt(252)
@@ -390,7 +392,7 @@ def backtest_signal(symbol, stock_data=None):
             "win_rate": float(win_rate),
             "total_trades": int(total_trades),
             "cumulative_return": float(cumulative_return.iloc[-1] * 100),
-            "max_drawdown": float(max_drawdown * 100),
+            "max_drawdown": max_drawdown,   # already negative %, e.g. -4.11
             "sharpe_ratio": float(sharpe),
             "avg_daily_return": float(signal_returns.mean() * 100),
         }
