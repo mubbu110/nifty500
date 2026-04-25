@@ -645,37 +645,45 @@ with tab1:
         template=chart_template,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor=plot_bg,
-        # Legend goes BELOW the chart to avoid overlapping subplot titles
+        # Legend inside the price chart panel — top left corner, always visible
         legend=dict(
             orientation="h",
-            yanchor="top", y=-0.04,
-            xanchor="left", x=0,
-            font=dict(size=12),
-            bgcolor="rgba(0,0,0,0)",
+            x=0.01, y=0.995,
+            xanchor="left", yanchor="top",
+            bgcolor="rgba(10,14,39,0.75)",
+            bordercolor="rgba(255,255,255,0.1)",
+            borderwidth=1,
+            font=dict(size=11, color="#e2e8f0"),
         ),
-        margin=dict(l=10, r=10, t=80, b=80),
-        # Style the subplot title annotations
+        margin=dict(l=60, r=20, t=40, b=20),
         annotations=[
             dict(
                 text="Price + MA50/200 + Bollinger Bands",
                 x=0.5, xref="paper",
-                y=1.0, yref="paper",
+                y=1.01, yref="paper",
                 xanchor="center", yanchor="bottom",
                 showarrow=False,
-                font=dict(size=13, color="#94a3b8"),
+                font=dict(size=12, color="#94a3b8"),
             ),
         ] + [
-            # Keep existing subplot titles but push them down slightly
             ann for ann in fig.layout.annotations
             if ann.text in ("MACD", "RSI (14)", "Volume")
         ],
     )
+
+    # Y-axis labels for each subplot
+    fig.update_yaxes(title_text="Price (₹)",  title_font=dict(size=11, color="#94a3b8"), row=1, col=1)
+    fig.update_yaxes(title_text="MACD",       title_font=dict(size=11, color="#94a3b8"), row=2, col=1)
+    fig.update_yaxes(title_text="RSI",        title_font=dict(size=11, color="#94a3b8"), row=3, col=1)
+    fig.update_yaxes(title_text="Volume",     title_font=dict(size=11, color="#94a3b8"), row=4, col=1)
+
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(showgrid=True, gridcolor=grid_col)
 
-    # Style all subplot titles to be smaller and muted
+    # Style all subplot title annotations
     for ann in fig.layout.annotations:
-        ann.font = dict(size=12, color="#94a3b8")
+        if ann.text in ("MACD", "RSI (14)", "Volume"):
+            ann.font = dict(size=12, color="#94a3b8")
 
     st.plotly_chart(fig, use_container_width=True)
 
