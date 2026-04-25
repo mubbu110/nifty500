@@ -308,31 +308,127 @@ def score_headline(text: str) -> float:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_news(symbol: str) -> list:
-    """Fetch news from Yahoo Finance RSS."""
+    """
+    Fetch news from multiple sources with fallbacks:
+    1. yfinance .news (most reliable on Streamlit Cloud)
+    2. Economic Times RSS
+    3. Moneycontrol RSS
+    4. Yahoo Finance RSS
+    5. Google News RSS
+    """
     news = []
-    urls = [
-        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}.NS&region=IN&lang=en-IN",
-        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=IN&lang=en-IN",
-    ]
-    for url in urls:
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:15]:
-                title = entry.get("title", "")
-                if not title:
-                    continue
-                sentiment = score_headline(title)
+
+    # ── Source 1: yfinance built-in news (no HTTP block issues) ──────────
+    try:
+        ticker = yf.Ticker(f"{symbol}.NS")
+        yf_news = ticker.news or []
+        for item in yf_news[:15]:
+            # newer yfinance returns nested content dict
+            content = item.get("content", item)
+            title = (content.get("title") or item.get("title", "")).strip()
+            link  = (content.get("canonicalUrl", {}).get("url")
+                     or content.get("clickThroughUrl", {}).get("url")
+                     or item.get("link", "#"))
+            pub   = content.get("pubDate") or item.get("providerPublishTime", "")
+            if title:
+                news.append({
+                    "title": title,
+                    "link": link,
+                    "published": str(pub)[:16],
+                    "sentiment": score_headline(title),
+                    "source": "Yahoo Finance",
+                })
+    except Exception:
+        pass
+
+    if len(news) >= 5:
+        return news[:15]
+
+    # ── Source 2: Economic Times RSS ─────────────────────────────────────
+    try:
+        company_query = symbol.replace("-", "+")
+        et_url = f"https://economictimes.indiatimes.com/rssfeedstopstories.cms"
+        feed = feedparser.parse(et_url)
+        for entry in feed.entries[:20]:
+            title = entry.get("title", "").strip()
+            if not title:
+                continue
+            # Filter to relevant articles
+            if symbol.lower() in title.lower() or symbol[:4].lower() in title.lower():
                 news.append({
                     "title": title,
                     "link": entry.get("link", "#"),
-                    "published": entry.get("published", ""),
-                    "sentiment": sentiment,
+                    "published": entry.get("published", "")[:16],
+                    "sentiment": score_headline(title),
+                    "source": "Economic Times",
                 })
+    except Exception:
+        pass
+
+    if len(news) >= 5:
+        return news[:15]
+
+    # ── Source 3: Google News RSS for Indian market ───────────────────────
+    try:
+        # Get company name from yfinance for better search
+        try:
+            info = yf.Ticker(f"{symbol}.NS").fast_info
+            company = symbol
+        except Exception:
+            company = symbol
+
+        g_url = (
+            f"https://news.google.com/rss/search?"
+            f"q={company}+NSE+stock&hl=en-IN&gl=IN&ceid=IN:en"
+        )
+        feed = feedparser.parse(g_url)
+        for entry in feed.entries[:15]:
+            title = entry.get("title", "").strip()
+            if not title:
+                continue
+            news.append({
+                "title": title,
+                "link": entry.get("link", "#"),
+                "published": entry.get("published", "")[:16],
+                "sentiment": score_headline(title),
+                "source": "Google News",
+            })
+    except Exception:
+        pass
+
+    if len(news) >= 3:
+        return news[:15]
+
+    # ── Source 4: Yahoo Finance RSS ───────────────────────────────────────
+    try:
+        for suffix in [f"{symbol}.NS", symbol]:
+            url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={suffix}&region=IN&lang=en-IN"
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:15]:
+                title = entry.get("title", "").strip()
+                if title:
+                    news.append({
+                        "title": title,
+                        "link": entry.get("link", "#"),
+                        "published": entry.get("published", "")[:16],
+                        "sentiment": score_headline(title),
+                        "source": "Yahoo Finance",
+                    })
             if news:
                 break
-        except Exception:
-            pass
-    return news
+    except Exception:
+        pass
+
+    # Deduplicate by title
+    seen = set()
+    unique = []
+    for item in news:
+        key = item["title"][:60]
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    return unique[:15]
 
 # ============================================================================
 # TOP BAR — logo + stock search + theme toggle (NO sidebar)
@@ -671,11 +767,12 @@ with tab2:
                     value=st.session_state.get(f"news_{symbol}_{i}", False),
                 )
             with text_col:
-                pub = item.get("published", "")[:16]
+                pub    = item.get("published", "")[:16]
+                source = item.get("source", "")
                 st.markdown(
                     f"<span style='color:{badge_color};font-size:13px'>{badge}</span>"
-                    f" &nbsp; <a href='{item['link']}' style='color:{_tp}'>{escape(item['title'])}</a>"
-                    f" <span style='color:{_cap};font-size:11px'>{pub}</span>",
+                    f" &nbsp; <a href='{item['link']}' target='_blank' style='color:{_tp}'>{escape(item['title'])}</a>"
+                    f" <span style='color:{_cap};font-size:11px'>&nbsp;·&nbsp;{source}&nbsp;{pub}</span>",
                     unsafe_allow_html=True,
                 )
             if checked:
