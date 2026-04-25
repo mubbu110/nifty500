@@ -1,662 +1,1081 @@
 """
-Professional Utils - Complete Enhanced Version
-MACD, Bollinger Bands, ADX, Volume, Backtesting, Risk Metrics
-FIXED: load_nifty500 timeout, OBV vectorized, cached benchmark, backtest reuses data
+Professional Nifty 500 Dashboard
+- No sidebar navigation: horizontal tabs on top
+- Stock search + select merged into one smart input
+- No stock auto-selected on first load
+- News section with sentiment feeding BUY/SELL/HOLD
+- Only one theme toggle (top-right)
+- Tabs never reset on interaction
 """
 
+import time
+import feedparser
+import re
+import streamlit as st
 import pandas as pd
 import numpy as np
-import streamlit as st
-import requests
+from html import escape
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import yfinance as yf
-from datetime import datetime, timedelta
-import warnings
 
-warnings.filterwarnings('ignore')
-
-from config import *
-
-# ============================================================================
-# TECHNICAL INDICATORS - ADVANCED
-# ============================================================================
-
-def calculate_macd(close, fast=12, slow=26, signal=9):
-    """Calculate MACD indicator"""
-    try:
-        ema_fast = close.ewm(span=fast).mean()
-        ema_slow = close.ewm(span=slow).mean()
-        macd_line = ema_fast - ema_slow
-        signal_line = macd_line.ewm(span=signal).mean()
-        histogram = macd_line - signal_line
-        return macd_line, signal_line, histogram
-    except:
-        return None, None, None
-
-def calculate_bollinger_bands(close, period=20, std_dev=2):
-    """Calculate Bollinger Bands"""
-    try:
-        sma = close.rolling(period).mean()
-        std = close.rolling(period).std()
-        upper = sma + (std * std_dev)
-        lower = sma - (std * std_dev)
-        return upper, sma, lower
-    except:
-        return None, None, None
-
-def calculate_adx(high, low, close, period=14):
-    """Calculate ADX - Trend Strength"""
-    try:
-        tr1 = high - low
-        tr2 = abs(high - close.shift())
-        tr3 = abs(low - close.shift())
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(period).mean()
-
-        up = high.diff()
-        down = -low.diff()
-
-        pos_dm = up.where((up > down) & (up > 0), 0)
-        neg_dm = down.where((down > up) & (down > 0), 0)
-
-        pos_di = 100 * (pos_dm.rolling(period).mean() / atr)
-        neg_di = 100 * (neg_dm.rolling(period).mean() / atr)
-
-        di_diff = abs(pos_di - neg_di)
-        di_sum = pos_di + neg_di
-        dx = 100 * (di_diff / di_sum)
-        adx = dx.rolling(period).mean()
-
-        return adx, pos_di, neg_di
-    except:
-        return None, None, None
-
-def calculate_obv(close, volume):
-    """
-    Calculate On-Balance Volume - VECTORIZED (no Python loop).
-    Uses numpy sign diff for ~50x speedup over iterative version.
-    """
-    try:
-        direction = np.sign(close.diff()).fillna(0)
-        obv = (direction * volume).cumsum()
-        return obv
-    except:
-        return None
-
-def calculate_stochastic_rsi(close, period=14, k=3, d=3):
-    """Calculate Stochastic RSI"""
-    try:
-        rsi = calculate_rsi(close, period)
-        if rsi is None:
-            return None, None, None
-
-        min_rsi = rsi.rolling(period).min()
-        max_rsi = rsi.rolling(period).max()
-
-        stoch_rsi = 100 * ((rsi - min_rsi) / (max_rsi - min_rsi))
-        k_line = stoch_rsi.rolling(k).mean()
-        d_line = k_line.rolling(d).mean()
-
-        return stoch_rsi, k_line, d_line
-    except:
-        return None, None, None
-
-def calculate_rsi(close, period=14):
-    """Calculate RSI"""
-    if close is None or len(close) < period:
-        return None
-
-    delta = close.diff()
-    gain = delta.where(delta > 0, 0).rolling(period).mean()
-    loss = -delta.where(delta < 0, 0).rolling(period).mean()
-
-    rs = gain / loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi.fillna(50)
-
-def calculate_wma(series, period):
-    """Weighted Moving Average"""
-    weights = np.arange(1, period + 1)
-    return series.rolling(period).apply(lambda x: np.sum(weights * x) / np.sum(weights), raw=False)
+from config import THEMES, TOOLTIPS, FALLBACK_STOCKS, SECTOR_MAPPING
+from utils import (
+    load_nifty500, fetch_stock_data, calculate_technical_summary,
+    fetch_fundamentals, backtest_signal, calculate_risk_metrics,
+    calculate_professional_signal, calculate_bollinger_bands
+)
 
 # ============================================================================
-# FUNDAMENTALS
+# PAGE CONFIG
 # ============================================================================
 
-@st.cache_data(ttl=CACHE_FUNDAMENTALS_TTL)
-def fetch_fundamentals(symbol):
-    """
-    ALL metrics calculated from raw data — no pre-computed ratios fetched.
+st.set_page_config(
+    page_title="Nifty 500 Professional",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-    Formulas:
-      52W High/Low     = max(High) / min(Low) over last 252 trading days of OHLC history
-      Current Price    = latest Close from price history
-      Shares Outs.     = fast_info.shares (most reliable source for this one raw input)
-      Market Cap       = Current Price × Shares Outstanding
-      Annual Dividends = sum of all Dividends paid in last 1Y (raw unadjusted history)
-      Dividend Yield   = Annual Dividends ÷ Current Price × 100
-      Revenue (TTM)    = sum of last 4 quarters of Total Revenue (income statement)
-      Net Income (TTM) = sum of last 4 quarters of Net Income (income statement)
-      EPS              = Net Income (TTM) ÷ Shares Outstanding
-      P/E Ratio        = Current Price ÷ EPS
-      Profit Margin    = Net Income (TTM) ÷ Revenue (TTM) × 100
-      Total Debt       = Short-term Debt + Long-term Debt (balance sheet, latest quarter)
-      Equity           = Total Stockholder Equity (balance sheet, latest quarter)
-      Debt/Equity      = Total Debt ÷ Equity × 100
-    """
-    result = {k: "N/A" for k in [
-        "pe_ratio", "market_cap", "eps", "dividend_yield",
-        "revenue", "profit_margin", "debt_to_equity",
-        "52_week_high", "52_week_low",
-    ]}
+# ============================================================================
+# SESSION STATE
+# ============================================================================
 
+for key, default in [
+    ("theme", "dark"),
+    ("active_tab", 0),
+    ("symbol", None),
+    ("company_name", None),
+    ("industry", None),
+    ("selected_news", []),
+    ("news_fetched_for", None),
+    ("news_items", []),
+    ("sector_period", "1Y Return"),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# ============================================================================
+# THEME
+# ============================================================================
+
+def apply_theme():
+    theme = THEMES["dark"]
+
+    text_primary   = theme["text_primary"]    # #f0f4ff
+    text_secondary = theme["text_secondary"]  # #c7d2fe
+    bg_primary     = theme["bg_primary"]      # #0a0e27
+    bg_card        = theme["bg_card"]
+    bg_secondary   = theme["bg_secondary"]    # #0f1629
+    accent         = theme["accent"]          # #c084fc
+    border         = theme["border_color"]
+
+    signal_bg      = "rgba(0,0,0,0.12)"
+    signal_border  = "rgba(255,255,255,0.08)"
+    caption_color  = "rgba(255,255,255,0.45)"
+    metric_bg      = bg_card
+    metric_border  = border
+    plot_bg_css    = "rgba(15,22,41,0.8)"
+
+    st.markdown(f"""
+    <style>
+    /* ── Sidebar hide ── */
+    [data-testid="collapsedControl"] {{display:none}}
+    section[data-testid="stSidebar"]  {{display:none}}
+
+    /* ── App base ── */
+    .stApp {{
+        background-color: {bg_primary} !important;
+        color: {text_primary} !important;
+    }}
+
+    /* ── All text elements ── */
+    .stApp p, .stApp li, .stApp span,
+    .stApp label, .stApp div {{
+        color: {text_primary};
+    }}
+    .stApp h1, .stApp h2, .stApp h3,
+    .stApp h4, .stApp h5, .stApp h6 {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Markdown text ── */
+    .stMarkdown p, .stMarkdown li {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Caption / small text ── */
+    .stCaption, .stCaption p {{
+        color: {text_secondary} !important;
+        opacity: 0.8;
+    }}
+
+    /* ── Metrics ── */
+    [data-testid="stMetric"] {{
+        background-color: {metric_bg};
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid {metric_border};
+    }}
+    [data-testid="stMetricLabel"] p {{
+        color: {text_secondary} !important;
+        font-size: 13px !important;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {text_primary} !important;
+        font-size: 24px !important;
+        font-weight: 700 !important;
+    }}
+
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 4px;
+        background: {bg_secondary};
+        border-radius: 10px 10px 0 0;
+        padding: 4px 4px 0 4px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        padding: 8px 20px;
+        border-radius: 8px 8px 0 0;
+        font-weight: 600;
+        color: {text_secondary} !important;
+    }}
+    .stTabs [aria-selected="true"] {{
+        color: {accent} !important;
+        background: {bg_primary} !important;
+    }}
+
+    /* ── Selectbox / inputs ── */
+    .stSelectbox div[data-baseweb="select"] {{
+        background-color: {bg_secondary} !important;
+        border-color: {border} !important;
+    }}
+    .stSelectbox div[data-baseweb="select"] span {{
+        color: {text_primary} !important;
+    }}
+    .stTextInput input {{
+        background-color: {bg_secondary} !important;
+        color: {text_primary} !important;
+        border-color: {border} !important;
+    }}
+
+    /* ── Checkboxes ── */
+    .stCheckbox label span {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Radio buttons ── */
+    .stRadio label span {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Multiselect ── */
+    .stMultiSelect div[data-baseweb="select"] {{
+        background-color: {bg_secondary} !important;
+    }}
+    .stMultiSelect span {{
+        color: {text_primary} !important;
+    }}
+
+    /* ── Info / warning / error boxes ── */
+    .stAlert {{
+        background-color: {bg_secondary} !important;
+        color: {text_primary} !important;
+        border-radius: 8px;
+    }}
+
+    /* ── Dataframe ── */
+    .stDataFrame {{
+        border: 1px solid {border};
+        border-radius: 8px;
+    }}
+
+    /* ── Progress bar ── */
+    .stProgress > div > div {{
+        background-color: {accent} !important;
+    }}
+
+    /* ── Signal / card boxes (HTML) ── */
+    .signal-box {{
+        background: {signal_bg} !important;
+        border: 1px solid {signal_border} !important;
+        border-radius: 12px;
+    }}
+
+    /* ── Caption override for HTML spans ── */
+    span.caption {{
+        color: {caption_color} !important;
+    }}
+
+    /* ── Divider ── */
+    hr {{
+        border-color: {border} !important;
+        opacity: 0.5;
+    }}
+
+    /* ── Buttons ── */
+    .stButton button {{
+        background-color: {bg_secondary} !important;
+        color: {text_primary} !important;
+        border: 1px solid {border} !important;
+        border-radius: 8px !important;
+    }}
+    .stButton button:hover {{
+        border-color: {accent} !important;
+        color: {accent} !important;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Store for use in HTML blocks
+    st.session_state["_text_primary"]   = text_primary
+    st.session_state["_text_secondary"] = text_secondary
+    st.session_state["_caption_color"]  = caption_color
+    st.session_state["_signal_bg"]      = signal_bg
+    st.session_state["_signal_border"]  = signal_border
+
+apply_theme()
+
+# Shorthand helpers for inline HTML — dark mode hardcoded
+_tp  = "#f0f4ff"
+_ts  = "#c7d2fe"
+_cap = "rgba(255,255,255,0.45)"
+_sbg = "rgba(0,0,0,0.12)"
+_sbd = "rgba(255,255,255,0.08)"
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_peer_close(sym: str):
+    time.sleep(0.4)
     for suffix in [".NS", ".BO"]:
         try:
-            ticker = yf.Ticker(f"{symbol}{suffix}")
-
-            # ── 1. Price history → 52W High/Low + Current Price ──────────
-            try:
-                hist_raw = ticker.history(period="1y", auto_adjust=False)
-                hist_adj = ticker.history(period="1y", auto_adjust=True)
-
-                if hist_raw.empty:
-                    continue
-
-                # Flatten MultiIndex columns if present
-                for h in [hist_raw, hist_adj]:
-                    if isinstance(h.columns, pd.MultiIndex):
-                        h.columns = h.columns.get_level_values(0)
-
-                current_price = float(hist_adj["Close"].iloc[-1])
-                result["52_week_high"] = round(float(hist_raw["High"].max()), 2)
-                result["52_week_low"]  = round(float(hist_raw["Low"].min()),  2)
-            except Exception:
-                current_price = None
-                continue   # can't do anything without price data
-
-            # ── 2. Shares Outstanding → from fast_info (raw input only) ──
-            shares = None
-            try:
-                fi = ticker.fast_info
-                for attr in ["shares", "shares_outstanding", "sharesOutstanding"]:
-                    val = getattr(fi, attr, None)
-                    if val and float(val) > 0:
-                        shares = float(val)
-                        break
-            except Exception:
-                pass
-
-            # ── 3. Market Cap = Price × Shares ───────────────────────────
-            if current_price and shares:
-                result["market_cap"] = current_price * shares
-
-            # ── 4. Dividends → Dividend Yield = ΣDiv(1Y) ÷ Price × 100 ──
-            try:
-                if "Dividends" in hist_raw.columns:
-                    annual_div = float(hist_raw["Dividends"].sum())
-                    if current_price and current_price > 0:
-                        result["dividend_yield"] = round(
-                            (annual_div / current_price) * 100, 2
-                        )
-                    else:
-                        result["dividend_yield"] = 0.0
-            except Exception:
-                result["dividend_yield"] = 0.0
-
-            # ── 5. Income Statement → Revenue, Net Income (TTM) ──────────
-            net_income_ttm = None
-            revenue_ttm    = None
-            try:
-                # quarterly gives last 4 quarters = TTM
-                q_income = ticker.quarterly_income_stmt
-                if q_income is not None and not q_income.empty:
-                    # Take last 4 quarters (columns are dates, most recent first)
-                    last4 = q_income.iloc[:, :4]
-
-                    def _sum_row(df, *candidates):
-                        for name in candidates:
-                            matches = [r for r in df.index if name.lower() in str(r).lower()]
-                            if matches:
-                                try:
-                                    return float(df.loc[matches[0]].iloc[:4].sum())
-                                except Exception:
-                                    pass
-                        return None
-
-                    revenue_ttm    = _sum_row(last4,
-                        "Total Revenue", "Revenue", "Net Revenue",
-                        "TotalRevenue")
-                    net_income_ttm = _sum_row(last4,
-                        "Net Income", "Net Income Common Stockholders",
-                        "Net Income Applicable To Common Shares",
-                        "NetIncome", "NetIncomeCommonStockholders")
-
-                    if revenue_ttm and abs(revenue_ttm) > 0:
-                        result["revenue"] = revenue_ttm
-
-                    # Profit Margin = Net Income ÷ Revenue × 100
-                    if net_income_ttm is not None and revenue_ttm and revenue_ttm > 0:
-                        result["profit_margin"] = round(
-                            (net_income_ttm / revenue_ttm) * 100, 2
-                        )
-            except Exception:
-                pass
-
-            # ── 6. EPS = Net Income (TTM) ÷ Shares ───────────────────────
-            if net_income_ttm is not None and shares and shares > 0:
-                eps = net_income_ttm / shares
-                result["eps"] = round(eps, 2)
-
-                # ── 7. P/E = Price ÷ EPS ─────────────────────────────────
-                if current_price and eps > 0:
-                    result["pe_ratio"] = round(current_price / eps, 2)
-
-            # ── 8. Balance Sheet → Debt/Equity ───────────────────────────
-            try:
-                q_balance = ticker.quarterly_balance_sheet
-                if q_balance is not None and not q_balance.empty:
-                    latest = q_balance.iloc[:, 0]  # most recent quarter
-
-                    def _get_val(series, *candidates):
-                        for name in candidates:
-                            matches = [r for r in series.index
-                                       if name.lower() in str(r).lower()]
-                            if matches:
-                                try:
-                                    v = float(series[matches[0]])
-                                    if not np.isnan(v):
-                                        return v
-                                except Exception:
-                                    pass
-                        return None
-
-                    short_debt = _get_val(latest,
-                        "Current Debt", "Short Long Term Debt",
-                        "CurrentDebt", "ShortLongTermDebt",
-                        "Short Term Debt", "Current Portion Of Long Term Debt") or 0.0
-
-                    long_debt  = _get_val(latest,
-                        "Long Term Debt", "LongTermDebt",
-                        "Long Term Debt And Capital Lease Obligation") or 0.0
-
-                    equity     = _get_val(latest,
-                        "Stockholders Equity", "Total Stockholder Equity",
-                        "Common Stock Equity", "StockholdersEquity",
-                        "TotalStockholderEquity", "CommonStockEquity")
-
-                    total_debt = short_debt + long_debt
-                    if equity and equity > 0:
-                        result["debt_to_equity"] = round(
-                            (total_debt / equity) * 100, 2
-                        )
-            except Exception:
-                pass
-
-            # Got enough to stop trying .BO suffix
-            if result["52_week_high"] != "N/A":
-                break
-
+            d = yf.download(f"{sym}{suffix}", period="1y", progress=False, auto_adjust=True)
+            if d.empty or len(d) < 30:
+                continue
+            c = d["Close"]
+            if isinstance(c, pd.DataFrame):
+                c = c.iloc[:, 0]
+            return c.dropna()
         except Exception:
-            continue
+            pass
+    return None
 
-    return result
+def find_sector(symbol, industry):
+    sym_upper = symbol.upper()
+    for sector, syms in SECTOR_MAPPING.items():
+        if sym_upper in [s.upper() for s in syms]:
+            return sector
+    if industry and industry not in ("Unknown", ""):
+        ind_lower = industry.lower()
+        for sector in SECTOR_MAPPING:
+            if sector.lower() in ind_lower or ind_lower in sector.lower():
+                return sector
+    return None
 
-# ============================================================================
-# NIFTY BENCHMARK - CACHED SEPARATELY
-# ============================================================================
+def get_peers(symbol, sector, max_peers=4):
+    if not sector or sector not in SECTOR_MAPPING:
+        return []
+    return [s for s in SECTOR_MAPPING[sector] if s.upper() != symbol.upper()][:max_peers]
 
-@st.cache_data(ttl=CACHE_PRICE_TTL)
-def fetch_nifty_benchmark(start_date, end_date):
+# ── News & Sentiment ─────────────────────────────────────────────────────────
+
+BULLISH_WORDS = {
+    "beats": 2.0, "profit": 1.8, "growth": 1.5, "surge": 2.0, "rally": 1.8,
+    "upgrade": 2.0, "record": 1.8, "launches": 1.2, "wins": 1.5, "raises": 1.5,
+    "buyback": 1.8, "strong": 1.5, "order": 1.2, "expansion": 1.5, "acquisition": 1.2,
+    "dividend": 1.5, "outperform": 2.0, "buy": 1.5, "positive": 1.2, "recovery": 1.5,
+}
+BEARISH_WORDS = {
+    "misses": -2.0, "loss": -1.8, "fraud": -3.0, "probe": -2.0, "downgrade": -2.0,
+    "penalty": -2.0, "resigns": -1.5, "crash": -2.5, "weak": -1.5, "falls": -1.2,
+    "default": -3.0, "debt": -1.2, "selloff": -2.0, "drop": -1.2, "cuts": -1.5,
+    "lawsuit": -2.0, "investigation": -2.0, "miss": -1.8, "negative": -1.2, "concern": -1.2,
+}
+
+def score_headline(text: str) -> float:
+    text_lower = text.lower()
+    score = 0.0
+    for word, weight in BULLISH_WORDS.items():
+        if word in text_lower:
+            score += weight
+    for word, weight in BEARISH_WORDS.items():
+        if word in text_lower:
+            score += weight  # already negative
+    return max(-10.0, min(10.0, score))
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_news(symbol: str) -> list:
     """
-    Fetch Nifty 50 benchmark data - cached so it's only downloaded once
-    regardless of how many stocks the user looks at.
+    Fetch news using Anthropic API with web_search tool.
+    This works on Streamlit Cloud since api.anthropic.com is an allowed domain.
+    Falls back to yfinance .news if API call fails.
     """
+    import json as _json
+
+    news = []
+
+    # ── Method 1: Anthropic API with web_search ───────────────────────────
     try:
-        data = yf.download("^NSEI", start=start_date, end=end_date, progress=False)
-        return data
-    except:
-        return pd.DataFrame()
+        import requests as _req
 
-# ============================================================================
-# BACKTESTING ENGINE - reuses already-fetched stock_data
-# ============================================================================
-
-def backtest_signal(symbol, stock_data=None):
-    """
-    Backtest the signal strategy.
-    Accepts existing stock_data to avoid a duplicate yfinance download.
-    """
-    try:
-        # Reuse passed data if available, otherwise fetch
-        if stock_data is not None and not stock_data.empty and len(stock_data) >= 300:
-            data = stock_data
-        else:
-            data = yf.download(f"{symbol}.NS", period="465d", progress=False)
-
-        if data.empty or len(data) < 50:
-            return None
-
-        close = data['Close']
-        volume = data['Volume']
-
-        # Squeeze single-level MultiIndex columns if present
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        if isinstance(volume, pd.DataFrame):
-            volume = volume.iloc[:, 0]
-
-        ma50 = close.rolling(50).mean()
-        ma200 = close.rolling(200).mean()
-        rsi = calculate_rsi(close)
-        macd, signal, _ = calculate_macd(close)
-        vol_avg = volume.rolling(20).mean()
-
-        if ma200.isna().all() or rsi is None or macd is None:
-            return None
-
-        # Vectorized signal generation (no Python loop)
-        price_above_ma200 = close > ma200
-        rsi_in_range = (rsi > 40) & (rsi < 70)
-        macd_positive = macd > signal
-        volume_strong = volume > vol_avg
-
-        buy_signals = (
-            price_above_ma200 &
-            rsi_in_range &
-            macd_positive &
-            volume_strong
-        ).astype(int)
-
-        returns = close.pct_change()
-        signal_returns = returns * buy_signals.shift(1)
-
-        trades = buy_signals[buy_signals != 0]
-        if len(trades) == 0:
-            return None
-
-        winning_trades = (signal_returns > 0).sum()
-        total_trades = len(trades)
-        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
-
-        cumulative_return = (1 + signal_returns).cumprod() - 1
-        # Max drawdown = worst peak-to-trough drop — stored as NEGATIVE percentage
-        # Formula: max( peak - current ) gives positive magnitude; negate it
-        max_drawdown = -float((cumulative_return.cummax() - cumulative_return).max()) * 100
-
-        sharpe = (
-            signal_returns.mean() / signal_returns.std() * np.sqrt(252)
-            if signal_returns.std() > 0 else 0
+        prompt = (
+            f"Search for the latest 10 news headlines about {symbol} NSE India stock. "
+            f"Return ONLY a JSON array, no markdown, no explanation. "
+            f"Each item must have: title (string), url (string), published (string, date only). "
+            f"Example: [{{'title':'...','url':'...','published':'2026-04-25'}}]"
         )
 
-        return {
-            "win_rate": float(win_rate),
-            "total_trades": int(total_trades),
-            "cumulative_return": float(cumulative_return.iloc[-1] * 100),
-            "max_drawdown": max_drawdown,   # already negative %, e.g. -4.11
-            "sharpe_ratio": float(sharpe),
-            "avg_daily_return": float(signal_returns.mean() * 100),
-        }
+        response = _req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=20,
+        )
 
-    except:
-        return None
+        if response.status_code == 200:
+            data = response.json()
+            # Extract text from response
+            full_text = " ".join(
+                block.get("text", "")
+                for block in data.get("content", [])
+                if block.get("type") == "text"
+            )
+            # Parse JSON array from response
+            start = full_text.find("[")
+            end   = full_text.rfind("]") + 1
+            if start != -1 and end > start:
+                items = _json.loads(full_text[start:end])
+                for item in items[:15]:
+                    title = str(item.get("title", "")).strip()
+                    if title:
+                        news.append({
+                            "title": title,
+                            "link": item.get("url", "#"),
+                            "published": str(item.get("published", ""))[:16],
+                            "sentiment": score_headline(title),
+                            "source": "Web Search",
+                        })
+    except Exception:
+        pass
 
-# ============================================================================
-# RISK METRICS - uses cached benchmark
-# ============================================================================
+    if len(news) >= 3:
+        return news[:15]
 
-def calculate_risk_metrics(stock_data, symbol):
-    """
-    Calculate Sharpe, Beta, Volatility, Drawdown.
-    Uses cached Nifty benchmark to avoid duplicate downloads.
-    """
+    # ── Method 2: yfinance .news (backup) ────────────────────────────────
     try:
-        close = stock_data['Close']
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
+        ticker = yf.Ticker(f"{symbol}.NS")
+        yf_news = ticker.news or []
+        for item in yf_news[:15]:
+            content = item.get("content", item)
+            title = (content.get("title") or item.get("title", "")).strip()
+            link  = (
+                content.get("canonicalUrl", {}).get("url")
+                or content.get("clickThroughUrl", {}).get("url")
+                or item.get("link", "#")
+            )
+            pub = str(content.get("pubDate") or item.get("providerPublishTime", ""))[:16]
+            if title:
+                news.append({
+                    "title": title,
+                    "link": link,
+                    "published": pub,
+                    "sentiment": score_headline(title),
+                    "source": "Yahoo Finance",
+                })
+    except Exception:
+        pass
 
-        returns = close.pct_change().dropna()
-
-        volatility = returns.std() * np.sqrt(252) * 100
-
-        risk_free = 0.06
-        sharpe = (returns.mean() * 252 - risk_free) / (returns.std() * np.sqrt(252))
-
-        cumulative = (1 + returns).cumprod()
-        running_max = cumulative.expanding().max()
-        drawdown = (cumulative - running_max) / running_max
-        max_drawdown = drawdown.min() * 100
-
-        # Use cached benchmark fetch
-        start_date = str(close.index[0].date())
-        end_date = str(close.index[-1].date())
-        nifty_data = fetch_nifty_benchmark(start_date, end_date)
-
-        beta = 1.0  # Default if benchmark unavailable
-        if not nifty_data.empty:
-            nifty_close = nifty_data['Close']
-            if isinstance(nifty_close, pd.DataFrame):
-                nifty_close = nifty_close.iloc[:, 0]
-            nifty_returns = nifty_close.pct_change().dropna()
-
-            common_index = returns.index.intersection(nifty_returns.index)
-            if len(common_index) > 30:
-                stock_r = returns[common_index]
-                market_r = nifty_returns[common_index]
-                covariance = np.cov(stock_r, market_r)[0][1]
-                market_variance = np.var(market_r)
-                beta = covariance / market_variance if market_variance > 0 else 1.0
-
-        return {
-            "volatility": float(volatility),
-            "sharpe_ratio": float(sharpe),
-            "max_drawdown": float(max_drawdown),
-            "beta": float(beta),
-        }
-
-    except:
-        return {
-            "volatility": "N/A",
-            "sharpe_ratio": "N/A",
-            "max_drawdown": "N/A",
-            "beta": "N/A",
-        }
+    return news[:15]
 
 # ============================================================================
-# PROFESSIONAL SIGNAL GENERATION
+# TOP BAR — logo + stock search + theme toggle (NO sidebar)
 # ============================================================================
 
-def calculate_professional_signal(technical_data, selected_news):
-    """Generate signal with confidence scoring"""
+stocks, live_data = load_nifty500()
+# Build label list — "Reliance Industries Ltd. (RELIANCE)"
+stocks["Label"] = stocks["Company Name"] + " (" + stocks["Symbol"] + ")"
+all_labels = stocks["Label"].tolist()
 
-    score = 0
-    confirmations = []
+top_l, top_m, top_r = st.columns([2, 6, 1])
 
-    close = technical_data["close"]
-    ma50 = technical_data["ma50"]
-    ma200 = technical_data["ma200"]
-    rsi = technical_data["rsi"]
+with top_l:
+    st.markdown("### 📊 Nifty 500 Professional")
 
-    if close > ma200:
-        score += 1.5
-        confirmations.append("✓ Price above MA200 (uptrend)")
-    elif close < ma50:
-        score -= 1.5
-        confirmations.append("✗ Price below MA50 (downtrend)")
+with top_m:
+    # Single selectbox — Streamlit's built-in search works exactly like the index dropdown
+    current_label = None
+    if st.session_state.symbol:
+        # Pre-select current stock so the box shows it after rerun
+        matches = stocks[stocks["Symbol"] == st.session_state.symbol]["Label"]
+        current_label = matches.values[0] if not matches.empty else None
 
-    if 40 < rsi < 70:
-        score += 1
-        confirmations.append("✓ RSI in healthy range (40-70)")
-    elif rsi > 70:
-        score -= 1
-        confirmations.append("⚠ RSI overbought (>70)")
-    elif rsi < 30:
-        score -= 1
-        confirmations.append("⚠ RSI oversold (<30)")
+    chosen = st.selectbox(
+        "🔍 Search stock",
+        options=[""] + all_labels,          # blank first = "no selection" state
+        index=0 if current_label is None else ([""] + all_labels).index(current_label),
+        placeholder="Type symbol or company name (e.g. INFY, Reliance, TCS…)",
+        label_visibility="collapsed",
+        key="stock_select_main",
+    )
 
-    if technical_data.get("macd") is not None and technical_data.get("macd_signal") is not None:
-        if technical_data["macd"] > technical_data["macd_signal"]:
-            score += 1
-            confirmations.append("✓ MACD above signal (positive momentum)")
-        else:
-            score -= 0.5
-            confirmations.append("⚠ MACD below signal")
+    if chosen and chosen != "":
+        row = stocks[stocks["Label"] == chosen]
+        if not row.empty:
+            new_symbol   = row["Symbol"].values[0]
+            new_company  = row["Company Name"].values[0]
+            new_industry = row["Industry"].values[0] if "Industry" in row.columns else "Unknown"
 
-    if technical_data.get("volume_trend") is not None:
-        if technical_data["volume_trend"] > 1:
-            score += 1
-            confirmations.append("✓ Volume increasing (strength)")
+            if new_symbol != st.session_state.symbol:
+                st.session_state.symbol            = new_symbol
+                st.session_state.company_name      = new_company
+                st.session_state.industry          = new_industry
+                st.session_state.selected_news     = []
+                st.session_state.news_items        = []
+                st.session_state.news_fetched_for  = None
+                st.rerun()
 
-    if technical_data.get("bb_middle") is not None:
-        if close < technical_data["bb_middle"]:
-            score += 0.5
-            confirmations.append("✓ Price near middle/lower band (entry zone)")
+with top_r:
+    st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    if selected_news:
-        sentiment_scores = [n.get("sentiment", 0) for n in selected_news]
-        avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
-        if avg_sentiment > 0.2:
-            score += 0.5
-            confirmations.append("✓ Positive news sentiment")
-        elif avg_sentiment < -0.2:
-            score -= 0.5
-            confirmations.append("✗ Negative news sentiment")
+# ── If no stock selected yet, show landing prompt ────────────────────────────
+if st.session_state.symbol is None:
+    st.markdown("---")
+    st.markdown("""
+    ## Welcome to Nifty 500 Professional 📊
+    **Search for any Nifty 500 stock above to get started.**
 
-    confidence = max(0, min(100, (score + 3) / 6 * 100))
+    ✅ Technical Analysis (7 indicators)  
+    ✅ Fundamentals (P/E, EPS, Market Cap…)  
+    ✅ Backtesting  
+    ✅ Risk Metrics (Beta, Sharpe, Drawdown)  
+    ✅ Sector & Peer Comparison  
+    ✅ News Sentiment → BUY / SELL / HOLD
+    """)
+    st.stop()
 
-    if score >= 3:
-        signal = "🟢 STRONG BUY"
-        color = "#34d399"
-    elif score >= 1.5:
-        signal = "🟡 BUY"
-        color = "#fbbf24"
-    elif score <= -2:
-        signal = "🔴 STRONG SELL"
-        color = "#f87171"
-    elif score <= -0.5:
-        signal = "🟠 SELL"
-        color = "#fb923c"
+# ============================================================================
+# DATA FETCH (only runs when symbol is set)
+# ============================================================================
+
+symbol       = st.session_state.symbol
+company_name = st.session_state.company_name
+industry     = st.session_state.industry
+
+with st.spinner(f"Loading {symbol}…"):
+    stock_data = fetch_stock_data(symbol)
+
+if stock_data is None:
+    st.error("Could not fetch data. Please try another stock.")
+    st.stop()
+
+technical       = calculate_technical_summary(stock_data)
+fundamentals    = fetch_fundamentals(symbol)
+risk_metrics    = calculate_risk_metrics(stock_data, symbol)
+backtest        = backtest_signal(symbol, stock_data=stock_data)
+
+# Auto-fetch news once per symbol
+if st.session_state.news_fetched_for != symbol:
+    st.session_state.news_items = fetch_news(symbol)
+    st.session_state.news_fetched_for = symbol
+    st.session_state.selected_news = []
+
+news_items = st.session_state.news_items
+
+# Signal uses currently selected news
+signal_analysis = calculate_professional_signal(
+    technical, st.session_state.selected_news
+)
+
+# ── Stock header ──────────────────────────────────────────────────────────────
+st.markdown(f"# {escape(company_name)}")
+st.markdown(f"*{symbol}.NS | {escape(str(industry))} | Nifty 500 Constituent*")
+
+# ============================================================================
+# HORIZONTAL TABS — with JS tab-persistence across reruns
+# ============================================================================
+
+TAB_NAMES = [
+    "📈 Analysis", "📰 News & Sentiment", "🎯 Sector",
+    "📊 Fundamentals", "🔬 Backtesting", "⚠️ Risk",
+]
+
+# Inject JS that:
+#  1. On load: clicks the tab matching session state (restores position after rerun)
+#  2. On tab click: posts the tab index back to Streamlit via a hidden input
+st.markdown("""
+<script>
+(function() {
+    // Read desired tab from sessionStorage (survives Streamlit rerun)
+    const desired = parseInt(sessionStorage.getItem('active_tab') || '0');
+
+    function clickTab(idx) {
+        const tabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+        if (tabs && tabs[idx]) {
+            tabs[idx].click();
+        }
+    }
+
+    // Click desired tab shortly after DOM is ready
+    setTimeout(() => clickTab(desired), 120);
+
+    // Listen for tab clicks and save to sessionStorage
+    setTimeout(() => {
+        const tabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+        tabs.forEach((tab, idx) => {
+            tab.addEventListener('click', () => {
+                sessionStorage.setItem('active_tab', String(idx));
+            });
+        });
+    }, 300);
+})();
+</script>
+""", unsafe_allow_html=True)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(TAB_NAMES)
+
+# tab1 = Analysis, tab2 = News & Sentiment, tab3 = Sector
+# tab4 = Fundamentals, tab5 = Backtesting, tab6 = Risk
+
+# ── Chart theme vars (dark mode only) ─────────────────────────────────────────
+chart_template = "plotly_dark"
+plot_bg        = "rgba(15,22,41,0.8)"
+price_col      = "#e2e8f0"
+grid_col       = "rgba(255,255,255,0.05)"
+zero_line      = "rgba(255,255,255,0.15)"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 1 — TECHNICAL ANALYSIS
+# ──────────────────────────────────────────────────────────────────────────────
+
+with tab1:
+    c1, c2 = st.columns([1.2, 2])
+    with c1:
+        st.markdown(f"""
+        <div style='text-align:center;padding:30px 20px;background:{_sbg};
+                    border:1px solid {_sbd};border-radius:12px'>
+          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;
+                    text-align:left;color:{_tp}'>Recommendation</p>
+          <p style='margin:0 0 16px 0;font-size:13px;text-align:left;color:{_cap}'>
+            Technical + News Signal</p>
+          <h2 style='margin:0;font-size:36px;font-weight:800;
+                     color:{signal_analysis["color"]}'>{signal_analysis["signal"]}</h2>
+          <p style='margin:14px 0 0 0;font-size:16px;color:{_tp}'>
+            <strong>Confidence: {signal_analysis['confidence']:.0f}%</strong></p>
+          <p style='margin:6px 0 0 0;font-size:12px;color:{_cap}'>
+            Based on technical + {len(st.session_state.selected_news)} news article(s)</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700;color:{_tp}'>
+          Signal Confirmations</p>
+        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px;color:{_tp}'>{conf}</p>"
+                 for conf in signal_analysis["confirmations"])}
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Price",      f"₹{technical['close']:.2f}",      f"{technical['change']:.2f}%")
+    m2.metric("MA50",       f"₹{technical['ma50']:.2f}",       help=TOOLTIPS["MA50"])
+    m3.metric("MA200",      f"₹{technical['ma200']:.2f}",      help=TOOLTIPS["MA200"])
+    m4.metric("RSI(14)",    f"{technical['rsi']:.0f}",          help=TOOLTIPS["RSI"])
+    m5.metric("Volatility", f"{technical['volatility']:.2f}%",  help="Annualized volatility")
+
+    st.markdown("---")
+    st.markdown("### 📊 Technical Chart — 7 Indicators")
+    st.caption("① Price  ② MA50  ③ MA200  ④ Bollinger Bands  ⑤ MACD  ⑥ RSI  ⑦ Volume")
+
+    close_s = technical['close_series']
+    ma50_s  = technical['ma50_series']
+    ma200_s = technical['ma200_series']
+    rsi_s   = technical['rsi_series']
+    vol_s   = technical['volume_series']
+    macd_s  = technical.get('macd_series')
+    msig_s  = technical.get('macd_signal_series')
+    bb_upper, bb_mid, bb_lower = calculate_bollinger_bands(close_s)
+
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        row_heights=[0.44, 0.20, 0.18, 0.18],
+        vertical_spacing=0.03,
+        subplot_titles=("Price + MA50/200 + Bollinger Bands", "MACD", "RSI (14)", "Volume"),
+    )
+    if bb_upper is not None:
+        fig.add_trace(go.Scatter(x=bb_upper.index, y=bb_upper, name='BB Upper',
+            line=dict(color='rgba(192,132,252,0.35)', width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=bb_lower.index, y=bb_lower, name='BB Lower',
+            line=dict(color='rgba(192,132,252,0.35)', width=1),
+            fill='tonexty', fillcolor='rgba(192,132,252,0.05)'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=bb_mid.index, y=bb_mid, name='BB Mid',
+            line=dict(color='rgba(192,132,252,0.55)', width=1, dash='dot'),
+            showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=close_s.index, y=close_s, name='Price',
+        line=dict(color=price_col, width=2)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=ma50_s.index, y=ma50_s, name='MA50',
+        line=dict(color='#f59e0b', width=1.5, dash='dash')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=ma200_s.index, y=ma200_s, name='MA200',
+        line=dict(color='#ef4444', width=1.5, dash='dash')), row=1, col=1)
+    if macd_s is not None and msig_s is not None:
+        hist = macd_s - msig_s
+        fig.add_trace(go.Bar(x=hist.index, y=hist, name='MACD Hist',
+            marker_color=['#34d399' if v >= 0 else '#f87171' for v in hist],
+            showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=macd_s.index, y=macd_s, name='MACD',
+            line=dict(color='#3b82f6', width=1.5)), row=2, col=1)
+        fig.add_trace(go.Scatter(x=msig_s.index, y=msig_s, name='Signal',
+            line=dict(color='#f97316', width=1.5)), row=2, col=1)
+        fig.add_hline(y=0, line_color=zero_line, line_width=1, row=2, col=1)
+    fig.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s, name='RSI(14)',
+        line=dict(color='#10b981', width=1.5)), row=3, col=1)
+    fig.add_hrect(y0=70, y1=100, fillcolor='rgba(239,68,68,0.08)',  line_width=0, row=3, col=1)
+    fig.add_hrect(y0=0,  y1=30,  fillcolor='rgba(16,185,129,0.08)', line_width=0, row=3, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="rgba(239,68,68,0.5)",   line_width=1, row=3, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="rgba(16,185,129,0.5)",  line_width=1, row=3, col=1)
+    fig.update_yaxes(range=[0, 100], row=3, col=1)
+    vol_colors = ['#10b981' if i == 0 or close_s.iloc[i] >= close_s.iloc[i-1]
+                  else '#ef4444' for i in range(len(close_s))]
+    fig.add_trace(go.Bar(x=vol_s.index, y=vol_s, name='Volume',
+        marker_color=vol_colors, showlegend=False), row=4, col=1)
+    fig.update_layout(height=950, hovermode='x unified', template=chart_template,
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        margin=dict(l=10, r=10, t=60, b=10))
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridcolor=grid_col)
+    st.plotly_chart(fig, use_container_width=True)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 2 — NEWS & SENTIMENT  (includes BUY/SELL/HOLD based on news)
+# ──────────────────────────────────────────────────────────────────────────────
+
+with tab2:
+    st.markdown("### 📰 News & Sentiment")
+
+    # ── Collect selected news from checkboxes (done BEFORE signal calc) ──
+    selected = []
+    if news_items:
+        for i, item in enumerate(news_items):
+            if st.session_state.get(f"news_{symbol}_{i}", False):
+                selected.append(item)
+    st.session_state.selected_news = selected
+
+    # ── News-only signal ─────────────────────────────────────────────────
+    news_signal_analysis = calculate_professional_signal(technical, selected)
+
+    sig_col, detail_col = st.columns([1.2, 2])
+    with sig_col:
+        sig = news_signal_analysis
+        st.markdown(f"""
+        <div style='text-align:center;padding:30px 20px;background:{_sbg};
+                    border:1px solid {_sbd};border-radius:12px'>
+          <p style='margin:0 0 4px 0;font-size:22px;font-weight:700;
+                    text-align:left;color:{_tp}'>Recommendation</p>
+          <p style='margin:0 0 16px 0;font-size:13px;text-align:left;
+                    color:{_cap}'>Technical + News Signal</p>
+          <h2 style='margin:0;font-size:36px;font-weight:800;
+                     color:{sig["color"]}'>{sig["signal"]}</h2>
+          <p style='margin:14px 0 0 0;font-size:16px;color:{_tp}'>
+            <strong>Confidence: {sig["confidence"]:.0f}%</strong></p>
+          <p style='margin:6px 0 0 0;font-size:12px;color:{_cap}'>
+            Based on technical + {len(selected)} news article(s)</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with detail_col:
+        st.markdown(f"""
+        <p style='margin:0 0 16px 0;font-size:22px;font-weight:700;
+                  color:{_tp}'>Signal Confirmations</p>
+        {"".join(f"<p style='margin:0 0 14px 0;font-size:16px;color:{_tp}'>{conf}</p>"
+                 for conf in sig["confirmations"])}
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Article selection ─────────────────────────────────────────────────
+    if not news_items:
+        st.warning("No recent news found. Recommendation is based on technicals only.")
     else:
-        signal = "⚪ HOLD"
-        color = "#9ca3af"
+        st.markdown("**Select articles to include in the signal:**")
+        st.caption("Tick articles → signal above updates instantly")
 
-    return {
-        "signal": signal,
-        "score": score,
-        "confidence": confidence,
-        "confirmations": confirmations,
-        "color": color,
-    }
+        newly_selected = []
+        for i, item in enumerate(news_items):
+            score = item["sentiment"]
+            if score >= 1.5:
+                badge = f"🟢 **{score:+.1f}** BULLISH"
+                badge_color = "#34d399"
+            elif score >= 0.3:
+                badge = f"🟡 **{score:+.1f}** mildly bullish"
+                badge_color = "#fbbf24"
+            elif score <= -1.5:
+                badge = f"🔴 **{score:+.1f}** BEARISH"
+                badge_color = "#f87171"
+            elif score <= -0.3:
+                badge = f"🟠 **{score:+.1f}** mildly bearish"
+                badge_color = "#fb923c"
+            else:
+                badge = f"⚪ **{score:+.1f}** neutral"
+                badge_color = "#9ca3af"
 
-# ============================================================================
-# CORE DATA FUNCTIONS
-# ============================================================================
+            cb_col, text_col = st.columns([0.04, 0.96])
+            with cb_col:
+                checked = st.checkbox(
+                    "", key=f"news_{symbol}_{i}",
+                    value=st.session_state.get(f"news_{symbol}_{i}", False),
+                )
+            with text_col:
+                pub    = item.get("published", "")[:16]
+                source = item.get("source", "")
+                st.markdown(
+                    f"<span style='color:{badge_color};font-size:13px'>{badge}</span>"
+                    f" &nbsp; <a href='{item['link']}' target='_blank' style='color:{_tp}'>{escape(item['title'])}</a>"
+                    f" <span style='color:{_cap};font-size:11px'>&nbsp;·&nbsp;{source}&nbsp;{pub}</span>",
+                    unsafe_allow_html=True,
+                )
+            if checked:
+                newly_selected.append(item)
 
-@st.cache_data(ttl=CACHE_INDEX_TTL)
-def load_nifty500():
-    """
-    Load Nifty 500 list.
-    Tries primary NSE URL first with a short timeout, then falls back
-    to a GitHub-hosted mirror, then to the hardcoded FALLBACK_STOCKS.
-    """
-    urls = [
-        # GitHub-hosted mirror (most reliable on Streamlit Cloud)
-        "https://raw.githubusercontent.com/datasets/nifty500/main/data/nifty500.csv",
-        # Official NSE URL (can be slow/blocked)
-        "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
-    ]
+        st.session_state.selected_news = newly_selected
 
-    for url in urls:
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 4 — FUNDAMENTALS
+# ──────────────────────────────────────────────────────────────────────────────
+
+with tab4:
+    st.markdown("### 📊 Fundamentals")
+    st.caption("All values calculated from raw financial statements — no pre-computed ratios.")
+
+    def _fmt(val, fmt):
         try:
-            response = requests.get(url, timeout=8, headers=REQUEST_HEADERS)
-            if response.status_code == 200:
-                from io import StringIO
-                stocks = pd.read_csv(StringIO(response.text))
-                # Normalise column names across sources
-                stocks.columns = [c.strip() for c in stocks.columns]
-                if "Symbol" in stocks.columns and "Company Name" in stocks.columns:
-                    return stocks, True
+            return fmt.format(float(val))
         except Exception:
-            continue
+            return "N/A"
 
-    # Hard fallback — always works, just 10 stocks
-    return pd.DataFrame(FALLBACK_STOCKS), False
+    def _fmt_large(val):
+        try:
+            v = float(val)
+            if v >= 1e12: return f"₹{v/1e12:.2f}T"
+            if v >= 1e9:  return f"₹{v/1e9:.2f}B"
+            if v >= 1e7:  return f"₹{v/1e7:.2f}Cr"
+            return f"₹{v:,.0f}"
+        except Exception:
+            return "N/A"
 
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("P/E Ratio",
+                  _fmt(fundamentals['pe_ratio'], "{:.2f}"),
+                  help="Formula: Current Price ÷ EPS (TTM)\nEPS = Net Income (TTM) ÷ Shares Outstanding")
+        st.metric("Market Cap",
+                  _fmt_large(fundamentals['market_cap']),
+                  help="Formula: Current Market Price × Shares Outstanding")
+        st.metric("EPS (TTM)",
+                  _fmt(fundamentals['eps'], "₹{:.2f}"),
+                  help="Formula: Net Income (last 4 quarters) ÷ Shares Outstanding")
+    with c2:
+        st.metric("Dividend Yield",
+                  f"{fundamentals['dividend_yield']:.2f}%" if fundamentals['dividend_yield'] != "N/A" else "N/A",
+                  help="Formula: Total dividends paid in last 1 year ÷ Current Price × 100")
+        st.metric("Debt / Equity",
+                  _fmt(fundamentals['debt_to_equity'], "{:.2f}"),
+                  help="Formula: (Short-term Debt + Long-term Debt) ÷ Stockholders Equity × 100\nSource: Latest quarterly balance sheet")
+        st.metric("Profit Margin",
+                  _fmt(fundamentals['profit_margin'], "{:.2f}%"),
+                  help="Formula: Net Income (TTM) ÷ Revenue (TTM) × 100")
+    with c3:
+        st.metric("52W High",
+                  _fmt(fundamentals['52_week_high'], "₹{:.2f}"),
+                  help="Formula: max(Daily High price) over last 252 trading days")
+        st.metric("52W Low",
+                  _fmt(fundamentals['52_week_low'], "₹{:.2f}"),
+                  help="Formula: min(Daily Low price) over last 252 trading days")
+        st.metric("Revenue (TTM)",
+                  _fmt_large(fundamentals['revenue']),
+                  help="Formula: Sum of Total Revenue over last 4 quarters (income statement)")
 
-@st.cache_data(ttl=CACHE_PRICE_TTL)
-def fetch_stock_data(symbol):
-    """Fetch stock data from Yahoo Finance"""
-    try:
-        data = yf.download(f"{symbol}.NS", period="3y", progress=False)
-        if data.empty:
-            data = yf.download(f"{symbol}.BO", period="3y", progress=False)
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 5 — BACKTESTING
+# ──────────────────────────────────────────────────────────────────────────────
 
-        if len(data) < 200:
-            return None
+with tab5:
+    st.markdown("### 🔬 Backtesting")
+    if backtest:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Win Rate",          f"{backtest['win_rate']:.1f}%")
+        c2.metric("Total Trades",      f"{backtest['total_trades']}")
+        c3.metric("Cumulative Return", f"{backtest['cumulative_return']:.2f}%")
+        c4.metric("Max Drawdown (Strategy)",
+                  f"-{abs(backtest['max_drawdown']):.2f}%",
+                  delta=f"-{abs(backtest['max_drawdown']):.2f}%",
+                  delta_color="inverse",
+                  help="Worst peak-to-trough loss DURING ACTIVE TRADES only (when strategy signal was BUY). Not the same as full price drawdown.")
+        st.markdown("---")
+        c1b, c2b = st.columns(2)
+        c1b.metric("Sharpe Ratio",     f"{backtest['sharpe_ratio']:.2f}")
+        c2b.metric("Avg Daily Return", f"{backtest['avg_daily_return']:.3f}%")
+        st.info("📌 Strategy: Price > MA200 · RSI 40–70 · MACD positive · Volume above 20d avg")
+        st.caption("ℹ️ **Max Drawdown (Strategy)** measures loss only during active BUY signals. The Risk tab shows **Max Drawdown (Full History)** — the worst loss over the entire 3-year price history, which will always be larger.")
+    else:
+        st.warning("Not enough historical data for backtesting this stock.")
 
-        return data
-    except:
-        return None
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 6 — RISK METRICS
+# ──────────────────────────────────────────────────────────────────────────────
 
-def calculate_technical_summary(data):
-    """Calculate all technical indicators"""
-    if data is None or len(data) < 200:
-        return None
+with tab6:
+    st.markdown("### ⚠️ Risk Metrics")
+    c1, c2, c3, c4 = st.columns(4)
+    v = risk_metrics.get('volatility',   'N/A')
+    s = risk_metrics.get('sharpe_ratio', 'N/A')
+    b = risk_metrics.get('beta',         'N/A')
+    d = risk_metrics.get('max_drawdown', 'N/A')
+    c1.metric("Volatility",   f"{v:.2f}%" if v != "N/A" else "N/A", help="Annualized price volatility")
+    c2.metric("Sharpe Ratio", f"{s:.2f}"  if s != "N/A" else "N/A", help=TOOLTIPS.get("SHARPE", ""))
+    c3.metric("Beta",         f"{b:.2f}"  if b != "N/A" else "N/A", help=TOOLTIPS.get("BETA", ""))
+    c4.metric("Max Drawdown (Full History)",
+              f"-{abs(float(d)):.2f}%" if d != "N/A" else "N/A",
+              delta=f"-{abs(float(d)):.2f}%" if d != "N/A" else None,
+              delta_color="inverse",
+              help="Worst peak-to-trough loss over the FULL 3-year price history, regardless of any trading signal. Higher than strategy drawdown since it includes all bad periods.")
 
-    # Handle MultiIndex columns from newer yfinance versions
-    close = data['Close']
-    volume = data['Volume']
-    high = data['High']
-    low = data['Low']
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 3 — SECTOR ANALYSIS
+# ──────────────────────────────────────────────────────────────────────────────
 
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-    if isinstance(volume, pd.DataFrame):
-        volume = volume.iloc[:, 0]
-    if isinstance(high, pd.DataFrame):
-        high = high.iloc[:, 0]
-    if isinstance(low, pd.DataFrame):
-        low = low.iloc[:, 0]
+with tab3:
+    st.markdown("### 🎯 Sector Analysis")
+    current_sector = find_sector(symbol, industry)
+    st.markdown(f"**{symbol}** · Sector: **{current_sector or 'Not mapped'}** · Industry: *{industry}*")
+    st.markdown("---")
 
-    ma50 = close.rolling(50).mean()
-    ma200 = close.rolling(200).mean()
-    rsi = calculate_rsi(close)
-    macd, macd_signal, macd_hist = calculate_macd(close)
-    bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(close)
-    adx, pos_di, neg_di = calculate_adx(high, low, close)
-    obv = calculate_obv(close, volume)
-    stoch_rsi, k_line, d_line = calculate_stochastic_rsi(close)
+    peer_symbols = get_peers(symbol, current_sector, max_peers=4)
+    all_symbols  = [symbol] + peer_symbols
 
-    vol_avg = volume.rolling(20).mean()
-    vol_trend = volume.iloc[-1] / vol_avg.iloc[-1] if vol_avg.iloc[-1] > 0 else 1
+    if not peer_symbols:
+        st.info(f"No peers mapped for **{current_sector or industry}**.")
 
-    change = ((close.iloc[-1] - close.iloc[-250]) / close.iloc[-250] * 100) if len(close) > 250 else 0
-    volatility = close.pct_change().std() * np.sqrt(252) * 100
-    one_year_return = ((close.iloc[-1] - close.iloc[-252]) / close.iloc[-252] * 100) if len(close) > 252 else 0
+    peer_closes = {}
+    if len(all_symbols) > 1:
+        prog = st.progress(0, text="Loading peer data…")
+        for i, sym in enumerate(all_symbols):
+            c = fetch_peer_close(sym)
+            if c is not None:
+                peer_closes[sym] = c
+            prog.progress((i + 1) / len(all_symbols), text=f"Loaded {sym}")
+        prog.empty()
+    else:
+        peer_closes[symbol] = technical['close_series']
 
-    return {
-        # Scalar values
-        "close": float(close.iloc[-1]),
-        "change": float(change),
-        "volatility": float(volatility),
-        "one_year_return": float(one_year_return),
-        "ma50": float(ma50.iloc[-1]),
-        "ma200": float(ma200.iloc[-1]),
-        "rsi": float(rsi.iloc[-1]) if rsi is not None else 50.0,
-        "macd": float(macd.iloc[-1]) if macd is not None else None,
-        "macd_signal": float(macd_signal.iloc[-1]) if macd_signal is not None else None,
-        "bb_upper": float(bb_upper.iloc[-1]) if bb_upper is not None else None,
-        "bb_middle": float(bb_middle.iloc[-1]) if bb_middle is not None else None,
-        "bb_lower": float(bb_lower.iloc[-1]) if bb_lower is not None else None,
-        "adx": float(adx.iloc[-1]) if adx is not None else None,
-        "obv": float(obv.iloc[-1]) if obv is not None else None,
-        "stoch_rsi": float(stoch_rsi.iloc[-1]) if stoch_rsi is not None else None,
-        "volume_trend": float(vol_trend),
-        # Series for charts
-        "close_series": close,
-        "ma50_series": ma50,
-        "ma200_series": ma200,
-        "rsi_series": rsi,
-        "macd_series": macd,
-        "macd_signal_series": macd_signal,
-        "volume_series": volume,
-    }
+    if not peer_closes:
+        st.warning("Could not load peer data. Try again in a moment.")
+    else:
+        st.markdown("#### 📋 Peer Comparison")
+        if peer_symbols:
+            st.caption(f"Comparing: {', '.join(peer_closes.keys())}")
+
+        rows = {}
+        for sym, c in peer_closes.items():
+            try:
+                r1y = (c.iloc[-1]-c.iloc[0])/c.iloc[0]*100
+                r3m = (c.iloc[-1]-c.iloc[-66])/c.iloc[-66]*100 if len(c)>66 else 0.0
+                r1m = (c.iloc[-1]-c.iloc[-22])/c.iloc[-22]*100 if len(c)>22 else 0.0
+                vol = c.pct_change().std()*np.sqrt(252)*100
+                rows[sym] = {"Price (₹)": round(float(c.iloc[-1]),2),
+                             "1M Return": round(float(r1m),2),
+                             "3M Return": round(float(r3m),2),
+                             "1Y Return": round(float(r1y),2),
+                             "Volatility": round(float(vol),2)}
+            except Exception:
+                pass
+
+        if rows:
+            df_p = pd.DataFrame(rows).T
+            df_p.index.name = "Symbol"
+
+            def _col(val):
+                try: return f"color: {'#34d399' if float(val)>=0 else '#f87171'}"
+                except: return ""
+
+            st.dataframe(
+                df_p.style.applymap(_col, subset=["1M Return","3M Return","1Y Return"])
+                    .format({"Price (₹)":"₹{:.2f}","1M Return":"{:+.2f}%",
+                             "3M Return":"{:+.2f}%","1Y Return":"{:+.2f}%","Volatility":"{:.2f}%"}),
+                use_container_width=True)
+
+            st.markdown("#### 📈 1-Year Normalised Performance")
+            st.caption(f"**{symbol}** shown as thick white line · peers shown thinner")
+
+            # ── Peer toggle checkboxes ────────────────────────────────────
+            peer_list = [s for s in peer_closes.keys() if s.upper() != symbol.upper()]
+            if peer_list:
+                st.markdown("**Toggle peers:**")
+                toggle_cols = st.columns(min(len(peer_list), 5))
+                visible_peers = set()
+                for ci, ps in enumerate(peer_list):
+                    key = f"peer_toggle_{symbol}_{ps}"
+                    if key not in st.session_state:
+                        st.session_state[key] = True
+                    with toggle_cols[ci % len(toggle_cols)]:
+                        if st.checkbox(ps, value=st.session_state[key], key=key):
+                            visible_peers.add(ps)
+
+            # ── Index overlay controls ────────────────────────────────────
+            st.markdown("**➕ Add index overlay:**")
+
+            ALL_INDICES = {
+                # Broad Market
+                "Nifty 50":                "^NSEI",
+                "Nifty 100":               "^CNX100",
+                "Nifty 200":               "^CNX200",
+                "Nifty 500":               "^CNX500",
+                "Nifty Next 50":           "^NSMIDCP",
+                "Sensex":                  "^BSESN",
+                "BSE 100":                 "BSE-100.BO",
+                "BSE 500":                 "BSE-500.BO",
+                # Mid & Small Cap
+                "Nifty Midcap 50":         "^NSEMDCP50",
+                "Nifty Midcap 100":        "NIFTY_MIDCAP_100.NS",
+                "Nifty Smallcap 100":      "^CNXSC",
+                "Nifty Smallcap 250":      "NIFTY_SMLCAP_250.NS",
+                "Nifty Microcap 250":      "NIFTY_MICROCAP250.NS",
+                "Nifty LargeMidcap 250":   "NIFTY_LARGEMID250.NS",
+                # Sector
+                "Nifty Bank":              "^NSEBANK",
+                "Nifty IT":                "^CNXIT",
+                "Nifty Auto":              "^CNXAUTO",
+                "Nifty Pharma":            "^CNXPHARMA",
+                "Nifty FMCG":              "^CNXFMCG",
+                "Nifty Financial Services":"NIFTY_FIN_SERVICE.NS",
+                "Nifty Metal":             "^CNXMETAL",
+                "Nifty Energy":            "^CNXENERGY",
+                "Nifty Realty":            "^CNXREALTY",
+                "Nifty Media":             "^CNXMEDIA",
+                "Nifty PSU Bank":          "^CNXPSUBANK",
+                "Nifty Private Bank":      "NIFTY_PVT_BANK.NS",
+                "Nifty Infrastructure":    "^CNXINFRA",
+                "Nifty Commodities":       "^CNXCMDT",
+                "Nifty Consumption":       "^CNXCONSUM",
+                "Nifty Healthcare":        "NIFTY_HEALTHCARE.NS",
+                "Nifty India Digital":     "NIFTY_IND_DIGITAL.NS",
+                "Nifty Oil & Gas":         "NIFTY_OIL_GAS.NS",
+                "Nifty Capital Markets":   "NIFTY_CAPITAL_MKT.NS",
+                # Strategy / Theme
+                "Nifty Div Opportunities": "^CNXDIVOP",
+                "Nifty Growth Sectors 15": "^CNXGS15",
+                "Nifty Alpha 50":          "NIFTY_ALPHA_50.NS",
+                "Nifty Quality 30":        "NIFTY_QUALITY30.NS",
+                "Nifty100 Low Volatility": "NIFTY100_LOWVOL30.NS",
+            }
+
+            INDEX_COLORS_MAP = [
+                '#94a3b8','#fdba74','#7dd3fc','#a3e635','#f9a8d4',
+                '#6ee7b7','#c4b5fd','#fde68a','#bfdbfe','#fca5a5',
+            ]
+
+            selected_indices = st.multiselect(
+                "Choose indices to overlay on chart",
+                options=list(ALL_INDICES.keys()),
+                default=[],
+                key=f"idx_multiselect_{symbol}",
+                placeholder="Select one or more Nifty / BSE indices…",
+            )
+
+            @st.cache_data(ttl=300, show_spinner=False)
+            def _fetch_index(ticker_sym):
+                try:
+                    d = yf.download(ticker_sym, period="1y", progress=False, auto_adjust=True)
+                    if d.empty:
+                        return None
+                    c = d["Close"]
+                    if isinstance(c, pd.DataFrame):
+                        c = c.iloc[:, 0]
+                    return c.dropna()
+                except Exception:
+                    return None
+
+            # ── Build chart ───────────────────────────────────────────────
+            PEER_COLORS = ['#fbbf24','#34d399','#60a5fa','#fb923c','#a78bfa']
+            fig_n = go.Figure()
+            peer_color_idx = 0
+
+            for sym, c in peer_closes.items():
+                try:
+                    norm = c / c.iloc[0] * 100
+                    is_main = (sym.upper() == symbol.upper())
+                    if is_main:
+                        fig_n.add_trace(go.Scatter(
+                            x=norm.index, y=norm, name=f"▶ {sym}",
+                            line=dict(color='#ffffff', width=5),
+                        ))
+                    elif sym in visible_peers:
+                        color = PEER_COLORS[peer_color_idx % len(PEER_COLORS)]
+                        fig_n.add_trace(go.Scatter(
+                            x=norm.index, y=norm, name=sym,
+                            line=dict(color=color, width=1.5),
+                            opacity=0.65,
+                        ))
+                        peer_color_idx += 1
+                except Exception:
+                    pass
+
+            # Add selected indices
+            for ci, idx_name in enumerate(selected_indices):
+                idx_close = _fetch_index(ALL_INDICES[idx_name])
+                if idx_close is not None:
+                    try:
+                        norm_idx = idx_close / idx_close.iloc[0] * 100
+                        color = INDEX_COLORS_MAP[ci % len(INDEX_COLORS_MAP)]
+                        fig_n.add_trace(go.Scatter(
+                            x=norm_idx.index, y=norm_idx,
+                            name=idx_name,
+                            line=dict(color=color, width=2, dash='dash'),
+                            opacity=0.85,
+                        ))
+                    except Exception:
+                        pass
+
+            fig_n.add_hline(y=100, line_dash="dot", line_color="rgba(128,128,128,0.4)")
+            fig_n.update_layout(
+                height=460, template=chart_template,
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
+                hovermode='x unified', yaxis_title="Rebased to 100",
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+                margin=dict(l=10, r=10, t=50, b=10),
+            )
+            st.plotly_chart(fig_n, use_container_width=True)
+
+            st.markdown("#### 📊 Return Comparison")
+            period_col = st.radio(
+                "Period",
+                ["1M Return", "3M Return", "1Y Return"],
+                index=["1M Return", "3M Return", "1Y Return"].index(
+                    st.session_state.get("sector_period", "1Y Return")
+                ),
+                horizontal=True,
+                key=f"sector_period_radio_{symbol}",
+            )
+            st.session_state["sector_period"] = period_col
+
+            bar_vals = df_p[period_col]
+            fig_b = go.Figure(go.Bar(x=bar_vals.index, y=bar_vals,
+                marker_color=['#34d399' if v>=0 else '#f87171' for v in bar_vals],
+                text=[f"{v:+.1f}%" for v in bar_vals], textposition='outside'))
+            fig_b.update_layout(height=350, template=chart_template,
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=plot_bg,
+                yaxis_title=f"{period_col} (%)", margin=dict(l=10,r=10,t=10,b=10))
+            st.plotly_chart(fig_b, use_container_width=True)
+
+# ============================================================================
+# FOOTER
+# ============================================================================
+
+st.markdown("---")
+st.markdown("⚠️ **Educational Use Only** | Not financial advice. Always do your own research.")
