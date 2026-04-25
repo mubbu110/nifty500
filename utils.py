@@ -212,6 +212,9 @@ def fetch_fundamentals(symbol):
                     if result["52_week_low"] == "N/A":
                         result["52_week_low"] = round(float(hist["Low"].min()), 2)
 
+                    # Current price from history (most reliable)
+                    current_price = float(hist["Close"].iloc[-1])
+
                     # Derive market cap from last price × shares if still missing
                     if result["market_cap"] == "N/A" and shares and last_price:
                         try:
@@ -220,13 +223,27 @@ def fetch_fundamentals(symbol):
                             pass
 
                     # Derive PE from last price ÷ EPS if both available
-                    if result["pe_ratio"] == "N/A" and result["eps"] != "N/A" and last_price:
+                    if result["pe_ratio"] == "N/A" and result["eps"] != "N/A" and current_price:
                         try:
                             eps_val = float(result["eps"])
                             if eps_val > 0:
-                                result["pe_ratio"] = round(float(last_price) / eps_val, 2)
+                                result["pe_ratio"] = round(current_price / eps_val, 2)
                         except Exception:
                             pass
+
+                    # ── Dividend Yield: sum actual dividends paid in last 1Y ÷ current price ──
+                    # This is always accurate regardless of yfinance info availability
+                    try:
+                        div_hist = ticker.history(period="1y", auto_adjust=False)
+                        if "Dividends" in div_hist.columns:
+                            annual_div = float(div_hist["Dividends"].sum())
+                            if annual_div > 0 and current_price > 0:
+                                result["dividend_yield"] = round((annual_div / current_price) * 100, 2)
+                            elif result["dividend_yield"] == "N/A":
+                                result["dividend_yield"] = 0.0   # no dividends paid
+                    except Exception:
+                        pass
+
             except Exception:
                 pass
 
