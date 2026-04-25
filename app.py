@@ -60,31 +60,22 @@ for key, default in [
 # ============================================================================
 
 def apply_theme():
-    theme = THEMES[st.session_state.theme]
-    is_dark = st.session_state.theme == "dark"
+    theme = THEMES["dark"]
 
-    # Dynamic colours based on mode
-    text_primary    = theme["text_primary"]
-    text_secondary  = theme["text_secondary"]
-    bg_primary      = theme["bg_primary"]
-    bg_card         = theme["bg_card"]
-    bg_secondary    = theme["bg_secondary"]
-    accent          = theme["accent"]
-    border          = theme["border_color"]
+    text_primary   = theme["text_primary"]    # #f0f4ff
+    text_secondary = theme["text_secondary"]  # #c7d2fe
+    bg_primary     = theme["bg_primary"]      # #0a0e27
+    bg_card        = theme["bg_card"]
+    bg_secondary   = theme["bg_secondary"]    # #0f1629
+    accent         = theme["accent"]          # #c084fc
+    border         = theme["border_color"]
 
-    # Signal box background — visible in both modes
-    signal_bg       = "rgba(0,0,0,0.12)"  if is_dark else "rgba(0,0,0,0.06)"
-    signal_border   = "rgba(255,255,255,0.08)" if is_dark else "rgba(0,0,0,0.10)"
-
-    # Caption / subtitle text
-    caption_color   = "rgba(255,255,255,0.45)" if is_dark else "rgba(0,0,0,0.45)"
-
-    # Metric card
-    metric_bg       = bg_card
-    metric_border   = border
-
-    # Chart plot background
-    plot_bg         = "rgba(15,22,41,0.8)" if is_dark else "rgba(245,247,252,0.8)"
+    signal_bg      = "rgba(0,0,0,0.12)"
+    signal_border  = "rgba(255,255,255,0.08)"
+    caption_color  = "rgba(255,255,255,0.45)"
+    metric_bg      = bg_card
+    metric_border  = border
+    plot_bg_css    = "rgba(15,22,41,0.8)"
 
     st.markdown(f"""
     <style>
@@ -245,12 +236,12 @@ def apply_theme():
 
 apply_theme()
 
-# Shorthand helpers used in HTML markdown blocks
-_tp  = st.session_state.get("_text_primary",   "#f0f4ff")
-_ts  = st.session_state.get("_text_secondary",  "#c7d2fe")
-_cap = st.session_state.get("_caption_color",   "rgba(255,255,255,0.45)")
-_sbg = st.session_state.get("_signal_bg",       "rgba(0,0,0,0.12)")
-_sbd = st.session_state.get("_signal_border",   "rgba(255,255,255,0.08)")
+# Shorthand helpers for inline HTML — dark mode hardcoded
+_tp  = "#f0f4ff"
+_ts  = "#c7d2fe"
+_cap = "rgba(255,255,255,0.45)"
+_sbg = "rgba(0,0,0,0.12)"
+_sbd = "rgba(255,255,255,0.08)"
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -391,11 +382,7 @@ with top_m:
                 st.rerun()
 
 with top_r:
-    st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
-    if st.button("🌓", help="Toggle dark / light theme", key="theme_btn"):
-        st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("&nbsp;", unsafe_allow_html=True)
 
 # ── If no stock selected yet, show landing prompt ────────────────────────────
 if st.session_state.symbol is None:
@@ -491,13 +478,17 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-# ── Chart theme vars — used across all tabs ───────────────────────────────────
-is_dark_mode  = st.session_state.theme == "dark"
-chart_template = "plotly_dark"   if is_dark_mode else "plotly_white"
-plot_bg        = "rgba(15,22,41,0.8)"       if is_dark_mode else "rgba(248,250,252,0.9)"
-price_col      = "#e2e8f0"                  if is_dark_mode else "#1e293b"
-grid_col       = "rgba(255,255,255,0.05)"   if is_dark_mode else "rgba(0,0,0,0.07)"
-zero_line      = "rgba(255,255,255,0.15)"   if is_dark_mode else "rgba(0,0,0,0.15)"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(TAB_NAMES)
+
+# tab1 = Analysis, tab2 = News & Sentiment, tab3 = Sector
+# tab4 = Fundamentals, tab5 = Backtesting, tab6 = Risk
+
+# ── Chart theme vars (dark mode only) ─────────────────────────────────────────
+chart_template = "plotly_dark"
+plot_bg        = "rgba(15,22,41,0.8)"
+price_col      = "#e2e8f0"
+grid_col       = "rgba(255,255,255,0.05)"
+zero_line      = "rgba(255,255,255,0.15)"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 1 — TECHNICAL ANALYSIS
